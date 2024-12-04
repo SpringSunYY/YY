@@ -1,0 +1,24 @@
+{
+  "name": "clang-tutorial",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "build": "loppo --site \"C 语言教程\" --id clang --theme wangdoc",
+    "build-and-commit": "npm run build && npm run commit",
+    "commit": "gh-pages --dist dist --dest dist/clang --branch master --repo git@github.com:wangdoc/website.git",
+    "chapter": "loppo chapter",
+    "server": "loppo server"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "CC-BY-SA-4.0",
+  "dependencies": {
+    "gh-pages": "6.x",
+    "loppo": "^0.6.24",
+    "loppo-theme-wangdoc": "^0.7.1"
+  }
+}
