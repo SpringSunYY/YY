@@ -558,7 +558,7 @@ where br.returntime IS NULL
 
 12、查询定价高于平均定价的相关图书信息，结果包含图书编号、书名、作者、出版社和定价。
 
-```
+```sql
 SELECT AVG(price)
 FROM book;
 SELECT bid AS 图书编号, bname AS 书名, author AS 作者, publisher AS 出版社, price AS 定价
@@ -570,7 +570,7 @@ WHERE price > (SELECT AVG(price) FROM book);
 
 13、查询从未被读者借阅的相关图书信息，结果包含图书编号、书名、作者、出版社和定价。
 
-```
+```sql
 SELECT bid AS 图书编号, bname AS 书名, author AS 作者, publisher AS 出版社, price AS 定价
 FROM book
 WHERE bid NOT IN (SELECT DISTINCT bid FROM borrow);
@@ -582,7 +582,7 @@ WHERE bid NOT IN (SELECT DISTINCT bid FROM borrow);
 
 1、创建一个视图，包含图书表book中的图书编号bid、书名bname、作者author、出版社publisher 和定价price，然后利用该视图查询出“人民邮电出版社”的图书信息。
 
-```
+```sql
 CREATE VIEW view_book_info AS
 SELECT bid       AS 图书编号,
        bname     AS 书名,
@@ -597,7 +597,7 @@ WHERE 出版社 = '人民邮电出版社';
 
 2、创建一个视图，包含读者表reader 中的读者姓名rname、性别sex和读者类别表readertype 中的类别名称typename，然后利用该视图查询出读者类别是“学生”的信息。
 
-```
+```sql
 CREATE VIEW view_reader_info AS
 SELECT r.rname     AS 读者姓名,
        r.sex       AS 性别,
@@ -611,7 +611,7 @@ WHERE 类别名称 = '学生';
 
 3、创建一个视图，包含尚未还书的读者编号rid、读者姓名rname、书名bname 和借书日期 borrowtime，然后利用该视图查询出所有尚未还书的读者信息。
 
-```
+```sql
 CREATE VIEW view_unreturned_books AS
 SELECT br.rid        AS 读者编号,
        r.rname       AS 读者姓名,
@@ -627,7 +627,7 @@ FROM view_unreturned_books;
 
 4、创建一个视图，包含读者姓名rname 和书名bname，然后利用该视图查询出姓“李”的借阅了图书的读者信息，以及借阅图书的书名中包含“数据”的信息。
 
-```
+```sql
 CREATE VIEW view_reader_book AS
 SELECT r.rname AS 读者姓名,
        b.bname AS 书名
@@ -644,7 +644,7 @@ WHERE 书名 LIKE '%数据%';
 
 5、创建一个视图，包含读者表reader中的读者编号rid、读者姓名rname、性别sex 和读者类别编号typeno，然后向该视图中插入一条数据（55559999，李晓明，男，1）。
 
-```
+```sql
 CREATE VIEW view_reader_minimal AS
 SELECT rid    AS 读者编号,
        rname  AS 读者姓名,
@@ -663,13 +663,13 @@ VALUES ('55559999', '李晓明', '男', '1');
 
 （1）在图书表book的书名bname字段的前6个字符上创建一个升序的普通索引I_bname。
 
-```
+```sql
 CREATE INDEX I_bname ON book (bname(6) ASC);
 ```
 
 （2）在图书表book的图书编号bid字段上创建一个唯一索引，在放置位置position字段上创建一个普通索引，在定价price字段上创建一个普通索引且按照降序排列。
 
-```
+```sql
 CREATE UNIQUE INDEX I_bid ON book (bid);
 CREATE INDEX I_price ON book (position);
 CREATE INDEX I_position ON book (position);
@@ -680,7 +680,7 @@ CREATE INDEX I_price ON book (price DESC);
 
 （3）在借还书表borrow的读者编号rid字段和图书编号bid字段上创建一个组合索引。
 
-```
+```sql
 CREATE INDEX I_rid_bid
     ON borrow (rid, bid);
 ```
@@ -689,14 +689,14 @@ CREATE INDEX I_rid_bid
 
 （1）使用ALTER TABLE语句删除图书表book的定价price字段上创建的索引。
 
-```
+```sql
 ALTER TABLE book
     DROP INDEX I_price;
 ```
 
 （2）使用DROP INDEX语句删除在图书表 book 中创建的索引 I_bname。
 
-```
+```sql
 DROP INDEX I_bname
     ON book;
 ```
@@ -707,7 +707,7 @@ DROP INDEX I_bname
 
 1、将图书表 book 中存放位置 position 字段分成楼层和区，查询结果包含图书编号、书名、作者、出版社、楼层和区的信息。 
 
-```
+```sql
 SELECT bid                                                          AS 图书编号,
        bname                                                        AS 书名,
        author                                                       AS 作者,
@@ -721,7 +721,7 @@ FROM book;
 
 2、查询读者类别为学生且借阅超期（超过 60 天）读者的信息，结果包含读者姓名、书名、借阅日期和超期天数。（提示：结果与系统的当前日期相关，在不同的日期下执行会得到不同的结果。）
 
-```
+```sql
 SELECT r.rname                                          AS 读者姓名,
        b.bname                                          AS 书名,
        bo.borrowtime                                    AS 借阅日期,
@@ -739,7 +739,7 @@ WHERE rt.typename = '学生'
 
 3、创建带输入参数的存储过程，输入书名，查询借阅了该书读者的信息，结果包含读者编号、读者姓名、书名和借阅日期，然后调用该存储过程查询借阅了图书“数学分析习题演练”的读者的信息。
 
-```
+```sql
 DELIMITER $$
 CREATE PROCEDURE GetBorrowInfoByBookName(IN bookName VARCHAR(50))
 BEGIN
@@ -758,7 +758,7 @@ CALL GetBorrowInfoByBookName('数学分析习题演练');
 
 4、创建带输入参数的存储过程，输入姓名，显示是否有逾期未还图书，学生的借阅天数超60天、教师的借阅天数超90天则为逾期读者，结果包含读者姓名、读者类别、书名、借阅日期和超期天数，然后调用存储过程查询“宋洪博”的图书逾期信息。
 
-```
+```sql
 DELIMITER $$
 CREATE PROCEDURE CheckOverdueBooks(IN readerName VARCHAR(50))
 BEGIN
@@ -785,7 +785,7 @@ CALL CheckOverdueBooks('宋洪博');
 
 1、修改读者类别编号事务控制。要求在存储过程中定义事务，通过输入参数old_no和new_no修改读者类别表readertype中学生的类别编号typeno，将其由原来的old_no修改为新的new_no。为了保证数据的一致性，还需要同步修改读者表reader中相关的读者类别。只有这些修改操作都成功，才提交，否则回滚。分别模拟正常和异常情况下的修改结果。
 
-```
+```sql
 DELIMITER $$
 CREATE PROCEDURE UpdateReaderTypeNo(IN old_no CHAR(1), IN new_no CHAR(1))
 BEGIN
@@ -830,7 +830,7 @@ CALL UpdateReaderTypeNo('X', 'Y');
 
 （1）添加用户reader1、reader2和reader3，主机名是localhost，密码均为123456。
 
-```
+```sql
 CREATE USER 'reader1'@'localhost' IDENTIFIED BY '123456';
 CREATE USER 'reader2'@'localhost' IDENTIFIED BY '123456';
 CREATE USER 'reader3'@'localhost' IDENTIFIED BY '123456';
@@ -838,19 +838,19 @@ CREATE USER 'reader3'@'localhost' IDENTIFIED BY '123456';
 
 （2）将用户reader3的名称修改为reader。
 
-```
+```sql
 RENAME USER 'reader3'@'localhost' TO 'reader'@'localhost';
 ```
 
 （3）将用户reader的密码修改为987654
 
-```
+```sql
 ALTER USER 'reader'@'localhost' IDENTIFIED BY '987654';
 ```
 
 （4）删除用户reader。
 
-```
+```sql
 DROP USER 'reader'@'localhost';
 ```
 
@@ -858,31 +858,31 @@ DROP USER 'reader'@'localhost';
 
 （1）授予用户reader1对数据库librarydb中读者表reader的UPDATE操作权限。
 
-```
+```sql
 GRANT UPDATE ON mysql_library_db.reader TO 'reader1'@'localhost';
 ```
 
 （2）授予用户reader1对数据库librarydb中图书表book的INSERT、DELETE操作权限。
 
-```
+```sql
 GRANT INSERT, DELETE ON mysql_library_db.book TO 'reader1'@'localhost';
 ```
 
 （3）授予用户reader2对数据库librarydb拥有所有操作权限，并允许reader2将该权限授予其他用户。
 
-```
+```sql
 GRANT ALL PRIVILEGES ON mysql_library_db.* TO 'reader2'@'localhost' WITH GRANT OPTION;
 ```
 
 （4）查看用户reader1拥有的权限
 
-```
+```sql
 SHOW GRANTS FOR 'reader1'@'localhost';
 ```
 
 （5）收回用户reader1对数据库librarydb中读者表reader的UPDATE操作权限。
 
-```
+```sql
 REVOKE UPDATE ON mysql_library_db.reader FROM 'reader1'@'localhost';
 ```
 
@@ -890,13 +890,13 @@ REVOKE UPDATE ON mysql_library_db.reader FROM 'reader1'@'localhost';
 
 （1）以用户root的身份将数据库librarydb中读者表reader和图书表book的数据备份到D盘的reader-book.sql文件中。
 
-```
+```sql
 mysqldump -u root -p librarydb reader book > D:/reader-book.sql
 ```
 
 （2）创建一个新数据库mytestdb，将D盘的reader-book.sql备份文件中的读者表reader和图书表book恢复到该数据库中。
 
-```
+```sql
 CREATE DATABASE mysql_library_db;
 mysql -u root -p mytestdb < D:/reader-book.sql
 ```
