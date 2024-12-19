@@ -1,3 +1,7 @@
+# JVM
+
+https://github.com/SpringSunYY/hm_jvm
+
 # 	基础篇
 
 ## 1、初始JVM
@@ -3544,3 +3548,8852 @@ G1（默认）
 从JDK9之后，由于G1日趋成熟，JDK默认的垃圾回收器已经修改为G1，所以强烈建议在生产环境上使用G1。
 
 G1的实现原理将在《原理篇》中介绍，更多前沿技术ZGC、GraalVM将在《高级篇》中介绍。
+
+
+
+
+
+# 实战篇
+
+## 1、内存调优
+
+### 1.1 内存溢出和内存泄漏
+
+内存泄漏（memory leak）：在Java中如果不再使用一个对象，但是该对象依然在GC ROOT的引用链上，这个对象就不会被垃圾回收器回收，这种情况就称之为内存泄漏。
+
+内存泄漏绝大多数情况都是由堆内存泄漏引起的，所以后续没有特别说明则讨论的都是堆内存泄漏。
+
+比如图中，如果学生对象1不再使用
+
+![img](./assets/1733411770318-167.png)
+
+可以选择将ArrayList到学生对象1的引用删除：
+
+![img](./assets/1733411770302-1.png)
+
+或者将对象A堆ArrayList的引用删除，这样所有的学生对象包括ArrayList都可以回收：
+
+![img](./assets/1733411770303-2.png)
+
+但是如果不移除这两个引用中的任何一个，学生对象1就属于内存泄漏了。
+
+少量的内存泄漏可以容忍，但是如果发生持续的内存泄漏，就像滚雪球雪球越滚越大，不管有多大的内存迟早会被消耗完，最终导致的结果就是内存溢出。但是产生内存溢出并不是只有内存泄漏这一种原因。        
+
+![img](./assets/1733411770303-3.png)
+
+这些学生对象如果都不再使用，越积越多，就会导致超过堆内存的上限出现内存溢出。
+
+正常情况的内存结构图如下：
+
+![img](./assets/1733411770303-4.png)
+
+内存溢出出现时如下：
+
+![img](./assets/1733411770303-5.png)
+
+内存泄漏的对象和依然在GC ROOT引用链上需要使用的对象加起来占满了内存空间，无法为新的对象分配内存。
+
+#### 内存泄漏的常见场景：
+
+1、内存泄漏导致溢出的常见场景是大型的Java后端应用中，在处理用户的请求之后，没有及时将用户的数据删除。随着用户请求数量越来越多，内存泄漏的对象占满了堆内存最终导致内存溢出。
+
+这种产生的内存溢出会直接导致用户请求无法处理，影响用户的正常使用。重启可以恢复应用使用，但是在运行一段时间之后依然会出现内存溢出。
+
+![img](./assets/1733411770303-6.png)
+
+代码：
+
+```Java
+package com.itheima.jvmoptimize.controller;
+
+import com.itheima.jvmoptimize.entity.UserEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/leak2")
+public class LeakController2 {
+    private static Map<Long,Object> userCache = new HashMap<>();
+
+    /**
+     * 登录接口 放入hashmap中
+     */
+    @PostMapping("/login")
+    public void login(String name,Long id){
+        userCache.put(id,new byte[1024 * 1024 * 300]);
+    }
+
+
+    /**
+     * 登出接口，删除缓存的用户信息
+     */
+
+    @GetMapping("/logout")
+    public void logout(Long id){
+        userCache.remove(id);
+    }
+
+}
+```
+
+设置虚拟机参数，将最大堆内存设置为1g:
+
+![img](./assets/1733411770303-7.png)
+
+在Postman中测试，登录id为1的用户：
+
+![img](./assets/1733411770303-8.png)
+
+调用logout接口，id为1那么数据会正常删除：
+
+![img](./assets/1733411770303-9.png)
+
+连续调用login传递不同的id，但是不调用logout
+
+![img](./assets/1733411770303-10.png)
+
+调用几次之后就会出现内存溢出：
+
+![img](./assets/1733411770303-11.png)
+
+2、第二种常见场景是分布式任务调度系统如Elastic-job、Quartz等进行任务调度时，被调度的Java应用在调度任务结束中出现了内存泄漏，最终导致多次调度之后内存溢出。
+
+这种产生的内存溢出会导致应用执行下次的调度任务执行。同样重启可以恢复应用使用，但是在调度执行一段时间之后依然会出现内存溢出。
+
+![img](./assets/1733411770303-12.png)
+
+开启定时任务：
+
+![img](./assets/1733411770304-13.png)
+
+定时任务代码：
+
+```Java
+package com.itheima.jvmoptimize.task;
+
+import com.itheima.jvmoptimize.leakdemo.demo4.Outer;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.List;
+
+@Component
+public class LeakTask {
+
+    private int count = 0;
+    private List<Object> list = new ArrayList<>();
+
+    @Scheduled(fixedRate = 100L)
+    public void test(){
+        System.out.println("定时任务调用" + ++count);
+        list.add(new Outer().newList());
+    }
+}
+```
+
+启动程序之后很快就出现了内存溢出：
+
+![img](./assets/1733411770304-14.png)
+
+### 1.2 解决内存溢出的方法
+
+![img](./assets/1733411770304-15.png)
+
+首先要熟悉一些常用的监控工具：
+
+#### 1.2.1 常用监控工具
+
+##### Top命令
+
+top命令是linux下用来查看系统信息的一个命令，它提供给我们去实时地去查看系统的资源，比如执行时的进程、线程和系统参数等信息。进程使用的内存为RES（常驻内存）- SHR（共享内存）
+
+![img](./assets/1733411770304-16.png)
+
+**优点：**
+
+- 操作简单
+- 无额外的软件安装
+
+**缺点：**
+
+只能查看最基础的进程信息，无法查看到每个部分的内存占用（堆、方法区、堆外） 
+
+##### VisualVM
+
+VisualVM是多功能合一的Java故障排除工具并且他是一款可视化工具，整合了命令行 JDK 工具和轻量级分析功能，功能非常强大。这款软件在Oracle JDK 6~8 中发布，但是在 Oracle JDK 9 之后不在JDK安装目录下需要单独下载。下载地址：https://visualvm.github.io/
+
+![img](./assets/1733411770304-17.png)
+
+**优点：**
+
+- 功能丰富，实时监控CPU、内存、线程等详细信息
+- 支持Idea插件，开发过程中也可以使用
+
+**缺点：**
+
+对大量集群化部署的Java进程需要手动进行管理
+
+如果需要进行远程监控，可以通过jmx方式进行连接。在启动java程序时添加如下参数：
+
+```Java
+-Djava.rmi.server.hostname=服务器ip地址
+-Dcom.sun.management.jmxremote
+-Dcom.sun.management.jmxremote.port=9122
+-Dcom.sun.management.jmxremote.ssl=false
+-Dcom.sun.management.jmxremote.authenticate=false
+```
+
+右键点击remote
+
+![img](./assets/1733411770304-18.png)
+
+填写服务器的ip地址：
+
+![img](./assets/1733411770304-19.png)
+
+右键添加JMX连接
+
+![img](./assets/1733411770304-20.png)
+
+填写ip地址和端口号，勾选不需要SSL安全验证：
+
+![img](./assets/1733411770304-21.png)
+
+双击成功连接。
+
+![img](./assets/1733411770304-22.png)
+
+##### Arthas
+
+Arthas 是一款线上监控诊断产品，通过全局视角实时查看应用 load、内存、gc、线程的状态信息，并能在不修改应用代码的情况下，对业务问题进行诊断，包括查看方法调用的出入参、异常，监测方法执行耗时，类加载信息等，大大提升线上问题排查效率。
+
+![img](./assets/1733411770304-23.png)
+
+**优点：**
+
+- 功能强大，不止于监控基础的信息，还能监控单个方法的执行耗时等细节内容。
+- 支持应用的集群管理
+
+**缺点：**
+
+部分高级功能使用门槛较高
+
+###### **使用阿里arthas tunnel管理所有的需要监控的程序**
+
+背景：
+
+小李的团队已经普及了arthas的使用，但是由于使用了微服务架构，生产环境上的应用数量非常多，使用arthas还得登录到每一台服务器上再去操作非常不方便。他看到官方文档上可以使用tunnel来管理所有需要监控的程序。
+
+![img](./assets/1733411770304-24.png)
+
+步骤：
+
+在Spring Boot程序中添加arthas的依赖(支持Spring Boot2)，在配置文件中添加tunnel服务端的地址，便于tunnel去监控所有的程序。
+
+2. 将tunnel服务端程序部署在某台服务器上并启动。
+3. 启动java程序
+4. 打开tunnel的服务端页面，查看所有的进程列表，并选择进程进行arthas的操作。
+
+pom.xml添加依赖：
+
+```XML
+<dependency>
+    <groupId>com.taobao.arthas</groupId>
+    <artifactId>arthas-spring-boot-starter</artifactId>
+    <version>3.7.1</version>
+</dependency>
+```
+
+application.yml中添加配置:
+
+```Properties
+arthas:
+  #tunnel地址，目前是部署在同一台服务器，正式环境需要拆分
+  tunnel-server: ws://localhost:7777/ws
+  #tunnel显示的应用名称，直接使用应用名
+  app-name: ${spring.application.name}
+  #arthas http访问的端口和远程连接的端口
+  http-port: 8888
+  telnet-port: 9999
+```
+
+在资料中找到arthas-tunnel-server.3.7.1-fatjar.jar上传到服务器，并使用
+
+`nohup java -jar -Darthas.enable-detail-pages=true arthas-tunnel-server.3.7.1-fatjar.jar & ` 命令启动该程序。`-Darthas.enable-detail-pages=true`参数作用是可以有一个页面展示内容。通过`服务器ip地址:8080/apps.html`打开页面，目前没有注册上来任何应用。
+
+```
+java -jar arthas-tunnel-server-3.7.1-fatjar.jar -Darthas.enable-detail-pages=true
+```
+
+![img](./assets/1733411770304-25.png)
+
+启动spring boot应用，如果在一台服务器上，注意区分端口。
+
+```Properties
+-Dserver.port=tomcat端口号
+-Darthas.http-port=arthas的http端口号
+-Darthas.telnet-port=arthas的telnet端口号端口号
+```
+
+![img](./assets/1733411770304-26.png)
+
+最终就能看到两个应用：
+
+![img](./assets/1733411770304-27.png)
+
+单击应用就可以进入操作arthas了。
+
+##### Prometheus+Grafana
+
+Prometheus+Grafana是企业中运维常用的监控方案，其中Prometheus用来采集系统或者应用的相关数据，同时具备告警功能。Grafana可以将Prometheus采集到的数据以可视化的方式进行展示。
+
+Java程序员要学会如何读懂Grafana展示的Java虚拟机相关的参数。
+
+![img](./assets/1733411770304-28.png)
+
+**优点：**
+
+- 支持系统级别和应用级别的监控，比如linux操作系统、Redis、MySQL、Java进程。
+- 支持告警并允许自定义告警指标，通过邮件、短信等方式尽早通知相关人员进行处理
+
+**缺点：**
+
+环境搭建较为复杂，一般由运维人员完成
+
+###### 阿里云环境搭建（了解即可）
+
+这一小节主要是为了让同学们更好地去阅读监控数据，所以提供一整套最简单的环境搭建方式，觉得困难可以直接跳过。企业中环境搭建的工作由运维人员来完成。
+
+1、在pom文件中添加依赖
+
+```XML
+<dependency>
+    <groupId>io.micrometer</groupId>
+    <artifactId>micrometer-registry-prometheus</artifactId>
+    <scope>runtime</scope>
+</dependency>
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-actuator</artifactId>
+
+    <exclusions><!-- 去掉springboot默认配置 -->
+        <exclusion>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-logging</artifactId>
+        </exclusion>
+    </exclusions>
+</dependency>
+```
+
+2、添加配置项
+
+```Properties
+management:
+  endpoint:
+    metrics:
+      enabled: true #支持metrics
+    prometheus:
+      enabled: true #支持Prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: jvm-test #实例名采集
+  endpoints:
+    web:
+      exposure:
+        include: '*' #开放所有端口
+```
+
+这两步做完之后，启动程序。
+
+3、通过地址：`ip地址:端口号/actuator/prometheus`访问之后可以看到jvm相关的指标数据。
+
+![img](./assets/1733411770304-29.png)
+
+4、创建阿里云Prometheus实例
+
+![img](./assets/1733411770304-30.png)
+
+5、选择ECS服务
+
+![img](./assets/1733411770305-31.png)
+
+6、在自己的ECS服务器上找到网络和交换机
+
+![img](./assets/1733411770305-32.png)
+
+7、选择对应的网络：
+
+![img](./assets/1733411770305-33.png)
+
+填写内容，与ECS里边的网络设置保持一致
+
+![img](./assets/1733411770305-34.png)
+
+8、选中新的实例，选择MicroMeter
+
+![img](./assets/1733411770305-35.png)
+
+![img](./assets/1733411770305-36.png)
+
+9、给ECS添加标签；
+
+![img](./assets/1733411770305-37.png)
+
+![img](./assets/1733411770305-38.png)
+
+10、填写内容，注意ECS的标签
+
+![img](./assets/1733411770305-39.png)
+
+11、点击大盘就可以看到指标了
+
+![img](./assets/1733411770305-40.png)
+
+12、指标内容:
+
+![img](./assets/1733411770305-41.png)
+
+#### 1.2.2 堆内存状况的对比
+
+- 正常情况
+  - 处理业务时会出现上下起伏，业务对象频繁创建内存会升高，触发MinorGC之后内存会降下来。
+  - 手动执行FULL GC之后，内存大小会骤降，而且每次降完之后的大小是接近的。
+  - 长时间观察内存曲线应该是在一个范围内。
+  - ![img](./assets/1733411770305-42.png)
+
+  - 出现内存泄漏
+    - 处于持续增长的情况，即使Minor GC也不能把大部分对象回收
+    - 手动FULL GC之后的内存量每一次都在增长
+    - 长时间观察内存曲线持续增长
+
+#### 1.2.3 产生内存溢出原因一 ：代码中的内存泄漏
+
+总结了6种产生内存泄漏的原因，均来自于java代码的不当处理：
+
+- equals()和hashCode()，不正确的equals()和hashCode()实现导致内存泄漏
+- ThreadLocal的使用，由于线程池中的线程不被回收导致的ThreadLocal内存泄漏
+- 内部类引用外部类，非静态的内部类和匿名内部类的错误使用导致内存泄漏
+- String的intern方法，由于JDK6中的字符串常量池位于永久代，intern被大量调用并保存产生的内存泄漏
+- 通过静态字段保存对象，大量的数据在静态变量中被引用，但是不再使用，成为了内存泄漏
+- 资源没有正常关闭，由于资源没有调用close方法正常关闭，导致的内存溢出
+
+##### 案例1：equals()和hashCode()导致的内存泄漏
+
+问题：
+
+在定义新类时没有重写正确的equals()和hashCode()方法。在使用HashMap的场景下，如果使用这个类对象作为key，HashMap在判断key是否已经存在时会使用这些方法，如果重写方式不正确，会导致相同的数据被保存多份。
+
+正常情况：
+
+1、以JDK8为例，首先调用hash方法计算key的哈希值，hash方法中会使用到key的hashcode方法。根据hash方法的结果决定存放的数组中位置。
+
+2、如果没有元素，直接放入。如果有元素，先判断key是否相等，会用到equals方法，如果key相等，直接替换value；key不相等，走链表或者红黑树查找逻辑，其中也会使用equals比对是否相同。
+
+![img](./assets/1733411770305-43.png)
+
+异常情况：
+
+1、hashCode方法实现不正确，会导致相同id的学生对象计算出来的hash值不同，可能会被分到不同的槽中。
+
+![img](./assets/1733411770305-44.png)
+
+2、equals方法实现不正确，会导致key在比对时，即便学生对象的id是相同的，也被认为是不同的key。
+
+![img](./assets/1733411770305-45.png)
+
+3、长时间运行之后HashMap中会保存大量相同id的学生数据。
+
+![img](./assets/1733411770305-46.png)
+
+```Java
+package com.itheima.jvmoptimize.leakdemo.demo2;
+
+import org.apache.commons.lang3.builder.EqualsBuilder;
+import org.apache.commons.lang3.builder.HashCodeBuilder;
+
+import java.util.Objects;
+
+public class Student {
+    private String name;
+    private Integer id;
+    private byte[] bytes = new byte[1024 * 1024];
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public Integer getId() {
+        return id;
+    }
+
+    public void setId(Integer id) {
+        this.id = id;
+    }
+
+  
+}
+package com.itheima.jvmoptimize.leakdemo.demo2;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public class Demo2 {
+    public static long count = 0;
+    public static Map<Student,Long> map = new HashMap<>();
+    public static void main(String[] args) throws InterruptedException {
+        while (true){
+            if(count++ % 100 == 0){
+                Thread.sleep(10);
+            }
+            Student student = new Student();
+            student.setId(1);
+            student.setName("张三");
+            map.put(student,1L);
+        }
+    }
+}
+```
+
+运行之后通过visualvm观察：
+
+![img](./assets/1733411770305-47.png)
+
+出现内存泄漏的现象。
+
+解决方案：
+
+1、在定义新实体时，始终重写equals()和hashCode()方法。
+
+2、重写时一定要确定使用了唯一标识去区分不同的对象，比如用户的id等。
+
+3、hashmap使用时尽量使用编号id等数据作为key，不要将整个实体类对象作为key存放。
+
+代码：
+
+```Properties
+package com.itheima.jvmoptimize.leakdemo.demo2;
+
+import org.apache.commons.lang3.builder.EqualsBuilder;
+import org.apache.commons.lang3.builder.HashCodeBuilder;
+
+import java.util.Objects;
+
+public class Student {
+    private String name;
+    private Integer id;
+    private byte[] bytes = new byte[1024 * 1024];
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public Integer getId() {
+        return id;
+    }
+
+    public void setId(Integer id) {
+        this.id = id;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+
+        Student student = (Student) o;
+
+        return new EqualsBuilder().append(id, student.id).isEquals();
+    }
+
+    @Override
+    public int hashCode() {
+        return new HashCodeBuilder(17, 37).append(id).toHashCode();
+    }
+}
+```
+
+##### 案例2：内部类引用外部类
+
+问题：
+
+1、非静态的内部类默认会持有外部类，尽管代码上不再使用外部类，所以如果有地方引用了这个非静态内部类，会导致外部类也被引用，垃圾回收时无法回收这个外部类。
+
+2、匿名内部类对象如果在非静态方法中被创建，会持有调用者对象，垃圾回收时无法回收调用者。
+
+```Java
+package com.itheima.jvmoptimize.leakdemo.demo3;
+
+import java.io.IOException;
+import java.util.ArrayList;
+
+public class Outer{
+    private byte[] bytes = new byte[1024 * 1024]; //外部类持有数据
+    private static String name  = "测试";
+    class Inner{
+        private String name;
+        public Inner() {
+            this.name = Outer.name;
+        }
+    }
+
+    public static void main(String[] args) throws IOException, InterruptedException {
+//        System.in.read();
+        int count = 0;
+        ArrayList<Inner> inners = new ArrayList<>();
+        while (true){
+            if(count++ % 100 == 0){
+                Thread.sleep(10);
+            }
+            inners.add(new Outer().new Inner());
+        }
+    }
+}
+package com.itheima.jvmoptimize.leakdemo.demo4;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+public class Outer {
+    private byte[] bytes = new byte[1024 * 1024 * 10];
+    public List<String> newList() {
+        List<String> list = new ArrayList<String>() {{
+            add("1");
+            add("2");
+        }};
+        return list;
+    }
+
+    public static void main(String[] args) throws IOException {
+        System.in.read();
+        int count = 0;
+        ArrayList<Object> objects = new ArrayList<>();
+        while (true){
+            System.out.println(++count);
+            objects.add(new Outer().newList());
+        }
+    }
+}
+```
+
+解决方案：
+
+1、这个案例中，使用内部类的原因是可以直接获取到外部类中的成员变量值，简化开发。如果不想持有外部类对象，应该使用静态内部类。
+
+2、使用静态方法，可以避免匿名内部类持有调用者对象。
+
+```Java
+package com.itheima.jvmoptimize.leakdemo.demo3;
+
+import java.io.IOException;
+import java.util.ArrayList;
+
+public class Outer{
+    private byte[] bytes = new byte[1024 * 1024]; //外部类持有数据
+    private static String name  = "测试";
+    static class Inner{
+        private String name;
+        public Inner() {
+            this.name = Outer.name;
+        }
+    }
+
+    public static void main(String[] args) throws IOException, InterruptedException {
+//        System.in.read();
+        int count = 0;
+        ArrayList<Inner> inners = new ArrayList<>();
+        while (true){
+            if(count++ % 100 == 0){
+                Thread.sleep(10);
+            }
+            inners.add(new Inner());
+        }
+    }
+}
+package com.itheima.jvmoptimize.leakdemo.demo4;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+public class Outer {
+    private byte[] bytes = new byte[1024 * 1024 * 10];
+    public static List<String> newList() {
+        List<String> list = new ArrayList<String>() {{
+            add("1");
+            add("2");
+        }};
+        return list;
+    }
+
+    public static void main(String[] args) throws IOException {
+        System.in.read();
+        int count = 0;
+        ArrayList<Object> objects = new ArrayList<>();
+        while (true){
+            System.out.println(++count);
+            objects.add(newList());
+        }
+    }
+}
+```
+
+##### 案例3：ThreadLocal的使用
+
+问题：
+
+如果仅仅使用手动创建的线程，就算没有调用ThreadLocal的remove方法清理数据，也不会产生内存泄漏。因为当线程被回收时，ThreadLocal也同样被回收。但是如果使用线程池就不一定了。
+
+```Java
+package com.itheima.jvmoptimize.leakdemo.demo5;
+
+import java.util.concurrent.*;
+
+public class Demo5 {
+    public static ThreadLocal<Object> threadLocal = new ThreadLocal<>();
+
+    public static void main(String[] args) throws InterruptedException {
+        ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(Integer.MAX_VALUE, Integer.MAX_VALUE,
+                0, TimeUnit.DAYS, new SynchronousQueue<>());
+        int count = 0;
+        while (true) {
+            System.out.println(++count);
+            threadPoolExecutor.execute(() -> {
+                threadLocal.set(new byte[1024 * 1024]);
+            });
+            Thread.sleep(10);
+        }
+
+
+    }
+}
+```
+
+解决方案：
+
+线程方法执行完，一定要调用ThreadLocal中的remove方法清理对象。
+
+```Java
+package com.itheima.jvmoptimize.leakdemo.demo5;
+
+import java.util.concurrent.*;
+
+public class Demo5 {
+    public static ThreadLocal<Object> threadLocal = new ThreadLocal<>();
+
+    public static void main(String[] args) throws InterruptedException {
+        ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(Integer.MAX_VALUE, Integer.MAX_VALUE,
+                0, TimeUnit.DAYS, new SynchronousQueue<>());
+        int count = 0;
+        while (true) {
+            System.out.println(++count);
+            threadPoolExecutor.execute(() -> {
+                threadLocal.set(new byte[1024 * 1024]);
+                threadLocal.remove();
+            });
+            Thread.sleep(10);
+        }
+
+
+    }
+}
+```
+
+##### 案例4：String的intern方法
+
+问题：
+
+JDK6中字符串常量池位于堆内存中的Perm Gen永久代中，如果不同字符串的intern方法被大量调用，字符串常量池会不停的变大超过永久代内存上限之后就会产生内存溢出问题。
+
+```Java
+package com.itheima.jvmoptimize.leakdemo.demo6;
+
+import org.apache.commons.lang3.RandomStringUtils;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class Demo6 {
+    public static void main(String[] args) {
+        while (true){
+            List<String> list = new ArrayList<String>();
+            int i = 0;
+            while (true) {
+                //String.valueOf(i++).intern(); //JDK1.6 perm gen 不会溢出
+                list.add(String.valueOf(i++).intern()); //溢出
+            }
+        }
+    }
+}
+```
+
+解决方案：
+
+1、注意代码中的逻辑，尽量不要将随机生成的字符串加入字符串常量池
+
+2、增大永久代空间的大小，根据实际的测试/估算结果进行设置-XX:MaxPermSize=256M
+
+##### 案例5：通过静态字段保存对象
+
+问题：
+
+如果大量的数据在静态变量中被长期引用，数据就不会被释放，如果这些数据不再使用，就成为了内存泄漏。
+
+解决方案：
+
+1、尽量减少将对象长时间的保存在静态变量中，如果不再使用，必须将对象删除（比如在集合中）或者将静态变量设置为null。
+
+2、使用单例模式时，尽量使用懒加载，而不是立即加载。
+
+```Java
+package com.itheima.jvmoptimize.leakdemo.demo7;
+
+import org.springframework.context.annotation.Lazy;
+import org.springframework.stereotype.Component;
+
+@Lazy //懒加载
+@Component
+public class TestLazy {
+    private byte[] bytes = new byte[1024 * 1024 * 1024];
+}
+```
+
+3、Spring的Bean中不要长期存放大对象，如果是缓存用于提升性能，尽量设置过期时间定期失效。
+
+```Java
+package com.itheima.jvmoptimize.leakdemo.demo7;
+
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+
+import java.time.Duration;
+
+public class CaffineDemo {
+    public static void main(String[] args) throws InterruptedException {
+        Cache<Object, Object> build = Caffeine.newBuilder()
+        //设置100ms之后就过期
+                 .expireAfterWrite(Duration.ofMillis(100))
+                .build();
+        int count = 0;
+        while (true){
+            build.put(count++,new byte[1024 * 1024 * 10]);
+            Thread.sleep(100L);
+        }
+    }
+}
+```
+
+##### 案例6：资源没有正常关闭
+
+问题：
+
+连接和流这些资源会占用内存，如果使用完之后没有关闭，这部分内存不一定会出现内存泄漏，但是会导致close方法不被执行。
+
+```Java
+package com.itheima.jvmoptimize.leakdemo.demo1;
+
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
+import java.net.URLConnection;
+import java.sql.*;
+
+//-Xmx50m -Xms50m
+public class Demo1 {
+
+    // JDBC driver name and database URL
+    static final String JDBC_DRIVER = "com.mysql.cj.jdbc.Driver";
+    static final String DB_URL = "jdbc:mysql:///bank1";
+
+    //  Database credentials
+    static final String USER = "root";
+    static final String PASS = "123456";
+
+    public static void leak() throws SQLException {
+        //Connection conn = null;
+        Statement stmt = null;
+        Connection conn = DriverManager.getConnection(DB_URL, USER, PASS);
+
+        // executes a valid query
+        stmt = conn.createStatement();
+        String sql;
+        sql = "SELECT id, account_name FROM account_info";
+        ResultSet rs = stmt.executeQuery(sql);
+
+        //STEP 4: Extract data from result set
+        while (rs.next()) {
+            //Retrieve by column name
+            int id = rs.getInt("id");
+            String name = rs.getString("account_name");
+
+            //Display values
+            System.out.print("ID: " + id);
+            System.out.print(", Name: " + name + "\n");
+        }
+
+    }
+
+    public static void main(String[] args) throws InterruptedException, SQLException {
+        while (true) {
+            leak();
+        }
+    }
+}
+```
+
+同学们可以测试一下这段代码会不会产生内存泄漏，应该是不会的。但是这个结论不是确定的，所以建议编程时养成良好的习惯，尽量关闭不再使用的资源。
+
+解决方案：
+
+1、为了防止出现这类的资源对象泄漏问题，必须在finally块中关闭不再使用的资源。
+
+2、从 Java 7 开始，使用try-with-resources语法可以用于自动关闭资源。
+
+![img](./assets/1733411770305-48.png)
+
+#### 1.2.4 产生内存溢出原因二 ： 并发请求问题
+
+通过发送请求向Java应用获取数据，正常情况下Java应用将数据返回之后，这部分数据就可以在内存中被释放掉。
+
+接收到请求时创建对象:
+
+![img](./assets/1733411770305-49.png)
+
+响应返回之后，对象就可以被回收掉：
+
+![img](./assets/1733411770305-50.png)
+
+并发请求问题指的是由于用户的并发请求量有可能很大，同时处理数据的时间很长，导致大量的数据存在于内存中，最终超过了内存的上限，导致内存溢出。这类问题的处理思路和内存泄漏类似，首先要定位到对象产生的根源。
+
+![img](./assets/1733411770305-51.png)
+
+那么怎么模拟并发请求呢？
+
+使用Apache Jmeter软件可以进行并发请求测试。
+
+Apache Jmeter是一款开源的测试软件，使用Java语言编写，最初是为了测试Web程序，目前已经发展成支持数据库、消息队列、邮件协议等不同类型内容的测试工具。
+
+![img](./assets/1733411770305-52.png)
+
+![img](./assets/1733411770306-53.png)
+
+Apache Jmeter支持插件扩展，生成多样化的测试结果。
+
+![img](./assets/1733411770306-54.png)
+
+![img](./assets/1733411770306-55.png)
+
+##### 使用Jmeter进行并发测试，发现内存溢出问题
+
+背景：
+
+小李的团队发现有一个微服务在晚上8点左右用户使用的高峰期会出现内存溢出的问题，于是他们希望在自己的开发环境能重现类似的问题。
+
+步骤：
+
+1、安装Jmeter软件，添加线程组。
+
+打开资料中的Jmeter，找到bin目录，双击`jmeter.bat`启动程序。
+
+![img](./assets/1733411770306-56.png)
+
+2. 在线程组中增加Http请求，添加随机参数。
+
+![img](./assets/1733411770306-57.png)
+
+添加线程组参数：
+
+![img](./assets/1733411770306-58.png)
+
+添加Http请求：
+
+![img](./assets/1733411770306-59.png)
+
+添加http参数：
+
+![img](./assets/1733411770306-60.png)
+
+接口代码：
+
+```Java
+/**
+ * 大量数据 + 处理慢
+ */
+@GetMapping("/test")
+public void test1() throws InterruptedException {
+    byte[] bytes = new byte[1024 * 1024 * 100];//100m
+    Thread.sleep(10 * 1000L);
+}
+```
+
+3. 在线程组中添加监听器 – 聚合报告，用来展示最终结果。
+
+![img](./assets/1733411770306-61.png)
+
+4. 启动程序，运行线程组并观察程序是否出现内存溢出。
+
+添加虚拟机参数：
+
+![img](./assets/1733411770306-62.png)
+
+点击运行：
+
+![img](./assets/1733411770306-63.png)
+
+很快就出现了内存溢出：
+
+![img](./assets/1733411770306-64.png)
+
+再来看一个案例：
+
+1、设置线程池参数：
+
+![img](./assets/1733411770306-65.png)
+
+2、设置http接口参数
+
+![img](./assets/1733411770306-66.png)
+
+3、代码：
+
+```Java
+/**
+ * 登录接口 传递名字和id,放入hashmap中
+ */
+@PostMapping("/login")
+public void login(String name,Long id){
+    userCache.put(id,new UserEntity(id,name));
+}
+```
+
+4、我们想生成随机的名字和id,选择函数助手对话框
+
+![img](./assets/1733411770306-67.png)
+
+5、选择Random随机数生成器
+
+![img](./assets/1733411770306-68.png)
+
+6、让随机数生成器生效，值中直接ctrl + v就行，已经被复制到粘贴板了。
+
+![img](./assets/1733411770306-69.png)
+
+7、字符串也是同理的设置方法：
+
+![img](./assets/1733411770306-70.png)
+
+8、添加name字段：
+
+![img](./assets/1733411770306-71.png)
+
+9、点击测试，一段时间之后同样出现了内存溢出：
+
+![img](./assets/1733411770306-72.png)
+
+#### 1.2.5 诊断
+
+##### 内存快照
+
+当堆内存溢出时，需要在堆内存溢出时将整个堆内存保存下来，生成内存快照(Heap Profile )文件。
+
+使用MAT打开hprof文件，并选择内存泄漏检测功能，MAT会自行根据内存快照中保存的数据分析内存泄漏的根源。
+
+![img](./assets/1733411770306-73.png)
+
+生成内存快照的Java虚拟机参数：
+
+​    `-XX:+HeapDumpOnOutOfMemoryError`：发生OutOfMemoryError错误时，自动生成hprof内存快照文件。
+
+​    `-XX:HeapDumpPath=<path>`：指定hprof文件的输出路径。
+
+使用MAT打开hprof文件，并选择内存泄漏检测功能，MAT会自行根据内存快照中保存的数据分析内存泄漏的根源。
+
+在程序中添加jvm参数：
+
+```Java
+-Xmx256m -Xms256m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=D:\jvm\dump\test1.hprof
+```
+
+运行程序之后：
+
+![img](./assets/1733411770306-74.png)
+
+使用MAT打开hprof文件（操作步骤见前文GC Root小节），首页就展示了MAT检测出来的内存泄漏问题原因。
+
+![img](./assets/1733411770306-75.png)
+
+点击Details查看详情，这个线程持有了大量的字节数组：
+
+![img](./assets/1733411770307-76.png)
+
+继续往下来，还可以看到溢出时线程栈，通过栈信息也可以怀疑下是否是因为这句代码创建了大量的对象：
+
+![img](./assets/1733411770307-77.png)
+
+##### MAT内存泄漏检测的原理
+
+MAT提供了称为支配树（Dominator Tree）的对象图。支配树展示的是对象实例间的支配关系。在对象引用图中，所有指向对象B的路径都经过对象A，则认为对象A支配对象B。
+
+如下图，A引用B、C，B、C引用D, C引用E，D、E引用F，转成支配树之后。由于E只有C引用，所以E挂在C上。接下来B、C、D、F都由其他至少1个对象引用，所以追溯上去，只有A满足支配它们的条件。
+
+![img](./assets/1733411770307-78.png)
+
+支配树中对象本身占用的空间称之为浅堆(Shallow Heap）。
+
+支配树中对象的子树就是所有被该对象支配的内容，这些内容组成了对象的深堆（Retained Heap），也称之为保留集（ Retained Set ） 。深堆的大小表示该对象如果可以被回收，能释放多大的内存空间。
+
+如下图：C自身包含一个浅堆，而C底下挂了E，所以C+E占用的空间大小代表C的深堆。
+
+![img](./assets/1733411770307-79.png)
+
+需求：
+
+使用如下代码生成内存快照，并分析TestClass对象的深堆和浅堆。
+
+如何在不内存溢出情况下生成堆内存快照？-XX:+HeapDumpBeforeFullGC可以在FullGC之前就生成内存快照。
+
+```Java
+package com.itheima.jvmoptimize.matdemo;
+
+import org.openjdk.jol.info.ClassLayout;
+
+import java.util.ArrayList;
+import java.util.List;
+
+//-XX:+HeapDumpBeforeFullGC -XX:HeapDumpPath=D:/jvm/dump/mattest.hprof
+public class HeapDemo {
+    public static void main(String[] args) {
+        TestClass a1 = new TestClass();
+        TestClass a2 = new TestClass();
+        TestClass a3 = new TestClass();
+        String s1 = "itheima1";
+        String s2 = "itheima2";
+        String s3 = "itheima3";
+
+        a1.list.add(s1);
+
+        a2.list.add(s1);
+        a2.list.add(s2);
+
+        a3.list.add(s3);
+
+        //System.out.print(ClassLayout.parseClass(TestClass.class).toPrintable());
+        s1 = null;
+        s2 = null;
+        s3 = null;
+        System.gc();
+    }
+}
+
+class TestClass {
+    public List<String> list = new ArrayList<>(10);
+}
+```
+
+上面代码的引用链如下：
+
+![img](./assets/1733411770307-80.png)
+
+转换成支配树，`TestClass`简称为tc。tc1 tc2 tc3都是直接挂在main线程对象上，itheima2 itheima3都只能通过tc2和tc3访问，所以直接挂上。itheima1不同，他可以由tc1 tc2访问，所以他要挂载他们的上级也就是main线程对象上：
+
+![img](./assets/1733411770307-81.png)
+
+使用mat来分析，添加虚拟机参数：
+
+![img](./assets/1733411770307-82.png)
+
+在FullGC之后产生了内存快照文件：
+
+![img](./assets/1733411770307-83.png)
+
+直接查看MAT的支配树功能：
+
+![img](./assets/1733411770307-84.png)
+
+输入main进行搜索：
+
+![img](./assets/1733411770307-85.png)
+
+可以看到结构与之前分析的是一致的：
+
+![img](./assets/1733411770307-86.png)
+
+ 同时可以看到字符串的浅堆大小和深堆大小：
+
+![img](./assets/1733411770307-87.png)
+
+为什么字符串对象的浅堆大小是24字节，深堆大小是56字节呢？首先字符串对象引用了字符数组，字符数组的字节大小底下有展示是32字节，那我们只需要搞清楚浅堆大小也就是他自身为什么是24字节就可以了。使用`jol`框架打印下对象大小（原理篇会详细展开讲解，这里先有个基本的认知）。
+
+添加依赖：
+
+```XML
+<dependency>
+    <groupId>org.openjdk.jol</groupId>
+    <artifactId>jol-core</artifactId>
+    <version>0.9</version>
+</dependency>
+```
+
+使用代码打印：
+
+```Java
+public class StringSize {
+    public static void main(String[] args) {
+        //使用JOL打印String对象
+        System.out.print(ClassLayout.parseClass(String.class).toPrintable());
+    }
+}
+```
+
+结果如下：
+
+![img](./assets/1733411770307-88.png)
+
+对象头占用了12字节，value字符数组的引用占用了4字节，int类型的hash字段占用4字节，还有4字节是对象填充，所以加起来是24字节。至于对象填充、对象头是做什么用的，在《原理篇》中会详细讲解。
+
+MAT就是根据支配树，从叶子节点向根节点遍历，如果发现深堆的大小超过整个堆内存的一定比例阈值，就会将其标记成内存泄漏的“嫌疑对象”。
+
+![img](./assets/1733411770307-89.png)
+
+##### 服务器上的内存快照导出和分析
+
+刚才我们都是在本地导出内存快照的，并且是程序已经出现了内存溢出，接下来我们要做到防范于未然，一旦看到内存大量增长就去分析内存快照，那此时内存还没溢出，怎么样去获得内存快照文件呢？
+
+**背景：**
+
+小李的团队通过监控系统发现有一个服务内存在持续增长，希望尽快通过内存快照分析增长的原因，由于并未产生内存溢出所以不能通过HeapDumpOnOutOfMemoryError参数生成内存快照。
+
+**思路：**
+
+导出运行中系统的内存快照，比较简单的方式有两种，注意只需要导出标记为存活的对象：
+
+通过JDK自带的jmap命令导出，格式为：
+
+​      jmap -dump:live,format=b,file=文件路径和文件名 进程ID
+
+通过arthas的heapdump命令导出，格式为：
+
+​      heapdump --live  文件路径和文件名 
+
+先使用`jps`或者`ps -ef`查看进程ID:
+
+![img](./assets/1733411770307-90.png)
+
+ 通过`jmap`命令导出内存快照文件，live代表只保存存活对象，format=b用二进制方式保存：
+
+![img](./assets/1733411770307-91.png)
+
+也可以在arthas中输出`heapdump`命令：
+
+![img](./assets/1733411770307-92.png)
+
+接下来下载到本地分析即可。
+
+**大文件的处理**
+
+在程序员开发用的机器内存范围之内的快照文件，直接使用MAT打开分析即可。但是经常会遇到服务器上的程序占用的内存达到10G以上，开发机无法正常打开此类内存快照，此时需要下载服务器操作系统对应的MAT。下载地址：https://eclipse.dev/mat/downloads.php 通过MAT中的脚本生成分析报告：
+
+ **./ParseHeapDump.sh 快照文件路径 org.eclipse.mat.api:suspects org.eclipse.mat.api:overview org.eclipse.mat.api:top_components**
+
+![img](./assets/1733411770307-93.png)
+
+> 注意：默认MAT分析时只使用了1G的堆内存，如果快照文件超过1G，需要修改MAT目录下的MemoryAnalyzer.ini配置文件调整最大堆内存。
+
+![img](./assets/1733411770307-94.png)
+
+最终会生成报告文件：
+
+![img](./assets/1733411770307-95.png)
+
+将这些文件下载到本地，解压之后打开index.html文件：
+
+![img](./assets/1733411770307-96.png)
+
+同样可以看到类似的报告：
+
+![img](./assets/1733411770307-97.png)
+
+##### 案例1 - 分页查询文章接口的内存溢出：
+
+背景：
+
+小李负责的新闻资讯类项目采用了微服务架构，其中有一个文章微服务，这个微服务在业务高峰期出现了内存溢出的现象。
+
+![img](./assets/1733411770308-98.png)
+
+解决思路：
+
+1、服务出现OOM内存溢出时，生成内存快照。
+
+2、使用MAT分析内存快照，找到内存溢出的对象。
+
+3、尝试在开发环境中重现问题，分析代码中问题产生的原因。
+
+4、修改代码。
+
+5、测试并验证结果。
+
+代码使用的是`com.itheima.jvmoptimize.practice.oom.controller.DemoQueryController`：
+
+![img](./assets/1733411770308-99.png)
+
+首先将项目打包，放到服务器上，同时使用如下启动命令启动。设置了最大堆内存为512m，同时堆内存溢出时会生成hprof文件：
+
+![img](./assets/1733411770308-100.png)
+
+编写JMeter脚本进行压测，size数据量一次性获取10000条，线程150，每个线程执行10次方法调用：
+
+![img](./assets/1733411770308-101.png)
+
+![img](./assets/1733411770308-102.png)
+
+执行之后可以发现服务器上已经生成了`hprof`文件：
+
+![img](./assets/1733411770308-103.png)
+
+将其下载到本地，通过MAT分析发现是Mysql返回的ResultSet存在大量的数据：
+
+![img](./assets/1733411770308-104.png)
+
+通过支配树，可以发现里边包含的数据，如果数据有一些特殊的标识，其实就可以判断出来是哪个接口产生的数据：
+
+![img](./assets/1733411770308-105.png)
+
+如果想知道每个线程在执行哪个方法，先找到spring的HandlerMethod对象：
+
+![img](./assets/1733411770308-106.png)
+
+接着去找引用关系：
+
+![img](./assets/1733411770308-107.png)
+
+通过描述信息就可以看到接口：
+
+![img](./assets/1733411770308-108.png)
+
+通过直方图的查找功能，也可以找到项目里哪些对象比较多：
+
+![img](./assets/1733411770308-109.png)
+
+**问题根源：**
+
+文章微服务中的分页接口没有限制最大单次访问条数，并且单个文章对象占用的内存量较大，在业务高峰期并发量较大时这部分从数据库获取到内存之后会占用大量的内存空间。
+
+**解决思路：**
+
+1、与产品设计人员沟通，限制最大的单次访问条数。
+
+以下代码，限制了每次访问的最大条数为100条
+
+![img](./assets/1733411770308-110.png)
+
+2、分页接口如果只是为了展示文章列表，不需要获取文章内容，可以大大减少对象的大小。
+
+把文章内容去掉，减少对象大小：
+
+![img](./assets/1733411770308-111.png)
+
+3、在高峰期对微服务进行限流保护。
+
+##### 案例2 - Mybatis导致的内存溢出：
+
+背景：
+
+小李负责的文章微服务进行了升级，新增加了一个判断id是否存在的接口，第二天业务高峰期再次出现了内存溢出，小李觉得应该和新增加的接口有关系。
+
+![img](./assets/1733411770308-112.png)
+
+解决思路：
+
+1、服务出现OOM内存溢出时，生成内存快照。
+
+2、使用MAT分析内存快照，找到内存溢出的对象。
+
+3、尝试在开发环境中重现问题，分析代码中问题产生的原因。
+
+4、修改代码。
+
+5、测试并验证结果。
+
+通过分析hprof发现调用的方法，但是这个仅供参考：
+
+![img](./assets/1733411770308-113.png)
+
+分析支配树，找到大对象来源，是一些字符串，里边还包含SQL
+
+![img](./assets/1733411770308-114.png)
+
+![img](./assets/1733411770308-115.png)
+
+通过SQL内容搜索下可以找到对应的方法：
+
+![img](./assets/1733411770308-116.png)
+
+发现里边用了foreach，如果循环内容很大，会产生特别大的一个SQL语句。
+
+直接打开jmeter，打开测试脚本进行测试:
+
+![img](./assets/1733411770308-117.png)
+
+本地测试之后，出现了内存溢出：
+
+![img](./assets/1733411770308-118.png)
+
+问题根源：
+
+Mybatis在使用foreach进行sql拼接时，会在内存中创建对象，如果foreach处理的数组或者集合元素个数过多，会占用大量的内存空间。
+
+解决思路：
+
+1、限制参数中最大的id个数。
+
+2、将id缓存到redis或者内存缓存中，通过缓存进行校验。
+
+##### 案例3 - 导出大文件内存溢出
+
+小李团队使用的是k8s将管理系统部署到了容器中，所以这一次我们使用阿里云的k8s环境还原场景，并解决问题。阿里云的k8s整体规划如下：
+
+![img](./assets/1733411770308-119.png)
+
+###### **K8S环境搭建（了解即可）**
+
+1、创建镜像仓库
+
+![img](./assets/1733411770309-120.png)
+
+2、项目中添加Dockerfile文件
+
+```Dockerfile
+FROM openjdk:8-jre
+
+MAINTAINER xiadong <xiadong@itcast.cn>
+
+RUN ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+
+ADD jvm-optimize-0.0.1-SNAPSHOT.jar /app/
+
+CMD ["java", "-Xmx512m", "-Xms512m", "-Dfile.encoding=UTF-8", "-XX:+HeapDumpOnOutOfMemoryError","-XX:HeapDumpPath=/opt/dump/heapdump.hprof","-jar", "/app/jvm-optimize-0.0.1-SNAPSHOT.jar"]
+
+EXPOSE 8881
+```
+
+3、完全按照阿里云的教程执行命令：
+
+![img](./assets/1733411770309-121.png)
+
+4、推送成功之后，镜像仓库中已经出现了镜像：
+
+![img](./assets/1733411770309-122.png)
+
+5、通过镜像构建k8s中的pod:
+
+![img](./assets/1733411770309-123.png)
+
+6、选择刚才的镜像：
+
+![img](./assets/1733411770309-124.png)
+
+7、在OSS中创建一个Bucket：
+
+![img](./assets/1733411770309-125.png)
+
+8、创建存储声明，选择刚才的Bucket：
+
+![img](./assets/1733411770309-126.png)
+
+9、选择这个存储声明，并添加hprof文件生成的路径映射，要和Dockerfile中虚拟机参数里的路径相同：
+
+![img](./assets/1733411770309-127.png)
+
+10、创建一个service，填写配置，方便外网进行访问。
+
+![img](./assets/1733411770309-128.png)
+
+![img](./assets/1733411770309-129.png)
+
+11、打开jmeter文件并测试：
+
+![img](./assets/1733411770309-130.png)
+
+12、OSS中出现了这个hprof文件：
+
+![img](./assets/1733411770309-131.png)
+
+13、从直方图就可以看到是导出文件导致的内存溢出：
+
+![img](./assets/1733411770309-132.png)
+
+问题根源：
+
+Excel文件导出如果使用POI的XSSFWorkbook，在大数据量（几十万）的情况下会占用大量的内存。
+
+代码：`com.itheima.jvmoptimize.practice.oom.controller.Demo2ExcelController`
+
+解决思路：
+
+1、使用poi的SXSSFWorkbook。
+
+2、hutool提供的BigExcelWriter减少内存开销。
+
+```Dockerfile
+ //http://www.hutool.cn/docs/#/poi/Excel%E5%A4%A7%E6%95%B0%E6%8D%AE%E7%94%9F%E6%88%90-BigExcelWriter
+    @GetMapping("/export_hutool")
+    public void export_hutool(int size, String path) throws IOException {
+
+
+        List<List<?>> rows = new ArrayList<>();
+        for (int i = 0; i < size; i++) {
+           rows.add( CollUtil.newArrayList(RandomStringUtils.randomAlphabetic(1000)));
+        }
+
+        BigExcelWriter writer= ExcelUtil.getBigWriter(path + RandomStringUtils.randomAlphabetic(10) + ".xlsx");
+// 一次性写出内容，使用默认样式
+        writer.write(rows);
+// 关闭writer，释放内存
+        writer.close();
+
+
+    }
+```
+
+3、使用easy excel，对内存进行了大量的优化。
+
+```Dockerfile
+//https://easyexcel.opensource.alibaba.com/docs/current/quickstart/write#%E9%87%8D%E5%A4%8D%E5%A4%9A%E6%AC%A1%E5%86%99%E5%85%A5%E5%86%99%E5%88%B0%E5%8D%95%E4%B8%AA%E6%88%96%E8%80%85%E5%A4%9A%E4%B8%AAsheet
+@GetMapping("/export_easyexcel")
+public void export_easyexcel(int size, String path,int batch) throws IOException {
+
+    // 方法1: 如果写到同一个sheet
+    String fileName = path + RandomStringUtils.randomAlphabetic(10) + ".xlsx";
+    // 这里注意 如果同一个sheet只要创建一次
+    WriteSheet writeSheet = EasyExcel.writerSheet("测试").build();
+    // 这里 需要指定写用哪个class去写
+    try (ExcelWriter excelWriter = EasyExcel.write(fileName, DemoData.class).build()) {
+        // 分100次写入
+        for (int i = 0; i < batch; i++) {
+            // 分页去数据库查询数据 这里可以去数据库查询每一页的数据
+            List<DemoData> datas = new ArrayList<>();
+            for (int j = 0; j < size / batch; j++) {
+                DemoData demoData = new DemoData();
+                demoData.setString(RandomStringUtils.randomAlphabetic(1000));
+                datas.add(demoData);
+            }
+            excelWriter.write(datas, writeSheet);
+            //写入之后datas数据就可以释放了
+        }
+    }
+
+}
+```
+
+##### 案例4 – ThreadLocal使用时占用大量内存
+
+背景：
+
+小李负责了一个微服务，但是他发现系统在没有任何用户使用时，也占用了大量的内存。导致可以使用的内存大大减少。
+
+![img](./assets/1733411770309-133.png)
+
+1、打开jmeter测试脚本
+
+![img](./assets/1733411770309-134.png)
+
+2、内存有增长，但是没溢出。所以通过jmap命令导出hprof文件
+
+![img](./assets/1733411770309-135.png)
+
+3、MAT分析之后发现每个线程中都包含了大量的对象：
+
+![img](./assets/1733411770309-136.png)
+
+4、在支配树中可以发现是ThreadLocalMap导致的内存增长：
+
+![img](./assets/1733411770309-137.png)
+
+5、ThreadLocalMap就是ThreadLocal对象保存数据的地方，所以只要分析ThreadLocal代码即可。在拦截器中，ThreadLocal清理的代码被错误的放在postHandle中，如果接口发生了异常，这段代码不会调用到，这样就产生了内存泄漏，将其移动到afterCompletion就可以了。
+
+![img](./assets/1733411770309-138.png)
+
+问题根源和解决思路：
+
+很多微服务会选择在拦截器preHandle方法中去解析请求头中的数据，并放入一些数据到ThreadLocal中方便后续使用。在拦截器的afterCompletion方法中，必须要将ThreadLocal中的数据清理掉。
+
+##### 案例5 – 文章内容审核接口的内存问题
+
+背景：
+
+文章微服务中提供了文章审核接口，会调用阿里云的内容安全接口进行文章中文字和图片的审核，在自测过程中出现内存占用较大的问题。
+
+![img](./assets/1733411770309-139.png)
+
+###### 设计1：使用SpringBoot中的@Async注解进行异步的审核。
+
+###### `com.itheima.jvmoptimize.practice.oom.controller.Demo1ArticleController`类中的`article1`方法
+
+![img](./assets/1733411770309-140.png)
+
+1、打开jmeter脚本，已经准好了一段测试用的文本。
+
+![img](./assets/1733411770309-141.png)
+
+2、运行测试，发现线程数一直在增加：
+
+![img](./assets/1733411770309-142.png)
+
+3、发现是因为异步线程池的最大线程数设置了Integer的最大值，所以只要没到上限就一直创建线程：
+
+![img](./assets/1733411770310-143.png)
+
+4、接下来修改为100，再次测试：
+
+![img](./assets/1733411770310-144.png)
+
+5、这次线程数相对来说比较正常：
+
+![img](./assets/1733411770310-145.png)
+
+存在问题：
+
+1、线程池参数设置不当，会导致大量线程的创建或者队列中保存大量的数据。
+
+2、任务没有持久化，一旦走线程池的拒绝策略或者服务宕机、服务器掉电等情况很有可能会丢失任务。
+
+###### 设计2：使用生产者和消费者模式进行处理，队列数据可以实现持久化到数据库。
+
+代码实现：article2方法
+
+![img](./assets/1733411770310-146.png)
+
+1、测试之后发现，出现内存泄漏问题(其实并不是泄漏，而是内存中存放了太多的对象，但是从图上看着像内存泄漏了)：
+
+![img](./assets/1733411770310-147.png)
+
+2、每次接口调用之后，都会将数据放入队列中。
+
+![img](./assets/1733411770310-148.png)
+
+3、而这个队列没有设置上限：
+
+![img](./assets/1733411770310-149.png)
+
+4、调整一下上限设置为2000：
+
+![img](./assets/1733411770310-150.png)
+
+5、这次就没有出现内存泄漏问题了：
+
+![img](./assets/1733411770310-151.png)
+
+存在问题：
+
+1、队列参数设置不正确，会保存大量的数据。
+
+2、实现复杂，需要自行实现持久化的机制，否则数据会丢失。
+
+###### 设计3：使用mq消息队列进行处理，由mq来保存文章的数据。发送消息的服务和拉取消息的服务可以是同一个，也可以不是同一个。
+
+代码方法：article3
+
+![img](./assets/1733411770310-152.png)
+
+测试结果：
+
+内存没有出现膨胀的情况
+
+![img](./assets/1733411770310-153.png)
+
+问题根源和解决思路：
+
+在项目中如果要使用异步进行业务处理，或者实现生产者 – 消费者的模型，如果在Java代码中实现，会占用大量的内存去保存中间数据。
+
+尽量使用Mq消息队列，可以很好地将中间数据单独进行保存，不会占用Java的内存。同时也可以将生产者和消费者拆分成不同的微服务。
+
+##### 在线定位问题
+
+诊断问题有两种方法，之前我们介绍的是第一种：
+
+- 生成内存快照并分析。
+
+优点：
+
+   通过完整的内存快照准确地判断出问题产生的原因
+
+缺点：
+
+ 内存较大时，生成内存快照较慢，这个过程中会影响用户的使用
+
+ 通过MAT分析内存快照，至少要准备1.5 – 2倍大小的内存空间
+
+- 在线定位问题
+
+优点：
+
+   无需生成内存快照，整个过程对用户的影响较小
+
+缺点：
+
+ 无法查看到详细的内存信息
+
+ 需要通过arthas或者btrace工具调测发现问题产生的原因，需要具备一定的经验
+
+###### 安装Jmeter插件
+
+为了监控响应时间RT、每秒事务数TPS等指标，需要在Jmeter上安装gc插件。
+
+1、打开资料中的插件包并解压。
+
+![img](./assets/1733411770310-154.png)
+
+2、按插件包中的目录，复制到jmeter安装目录的lib目录下。
+
+![img](./assets/1733411770310-155.png)
+
+3、重启之后就可以在监听器中看到三个选项，分别是活跃线程数、响应时间RT、每秒事务数TPS。
+
+![img](./assets/1733411770310-156.png)
+
+###### Arthas stack命令在线定位步骤
+
+1、使用jmap -histo:live 进程ID > 文件名 命令将内存中存活对象以直方图的形式保存到文件中，这个过程会影响用户的时间，但是时间比较短暂。
+
+![img](./assets/1733411770310-157.png)
+
+2、分析内存占用最多的对象，一般这些对象就是造成内存泄 打开1.txt文件，从图中可以看到，有一个UserEntity对象占用非常多的内存。
+
+![img](./assets/1733411770310-158.png)
+
+漏的原因。
+
+3、使用arthas的stack命令，追踪对象创建的方法被调用的调用路径，找到对象创建的根源。也可以使用btrace工具编写脚本追踪方法执行的过程。
+
+![img](./assets/1733411770310-159.png)
+
+接下来启动jmeter脚本，会发现有大量的方法调用这样不利于观察。
+
+![img](./assets/1733411770310-160.png)
+
+加上 `-n 1 ` 参数，限制只查看一笔调用：
+
+![img](./assets/1733411770311-161.png)
+
+这样就定位到了是`login`接口中创建的对象：
+
+![img](./assets/1733411770311-162.png)
+
+###### btrace在线定位问题步骤
+
+相比较arthas的stack命令，btrace允许我们自己编写代码获取感兴趣的内容，灵活性更高。
+
+BTrace 是一个在Java 平台上执行的追踪工具，可以有效地用于线上运行系统的方法追踪，具有侵入性小、对性能的影响微乎其微等特点。 项目中可以使用btrace工具，打印出方法被调用的栈信息。 使用方法： 1、下载btrace工具， 官方地址：https://github.com/btraceio/btrace/releases/latest
+
+在资料中也给出了：
+
+![img](./assets/1733411770311-163.png)
+
+2、编写btrace脚本，通常是一个java文件 依赖：
+
+```XML
+<dependencies>
+        <dependency>
+            <groupId>org.openjdk.btrace</groupId>
+            <artifactId>btrace-agent</artifactId>
+            <version>${btrace.version}</version>
+            <scope>system</scope>
+            <systemPath>D:\tools\btrace-v2.2.4-bin\libs\btrace-agent.jar</systemPath>
+        </dependency>
+
+        <dependency>
+            <groupId>org.openjdk.btrace</groupId>
+            <artifactId>btrace-boot</artifactId>
+            <version>${btrace.version}</version>
+            <scope>system</scope>
+            <systemPath>D:\tools\btrace-v2.2.4-bin\libs\btrace-boot.jar</systemPath>
+        </dependency>
+
+        <dependency>
+            <groupId>org.openjdk.btrace</groupId>
+            <artifactId>btrace-client</artifactId>
+            <version>${btrace.version}</version>
+            <scope>system</scope>
+            <systemPath>D:\tools\btrace-v2.2.4-bin\libs\btrace-client.jar</systemPath>
+        </dependency>
+    </dependencies>
+```
+
+代码：
+
+代码非常简单，就是打印出栈信息。clazz指定类，method指定监控的方法。
+
+```Java
+import org.openjdk.btrace.core.annotations.*;
+
+import static org.openjdk.btrace.core.BTraceUtils.jstack;
+import static org.openjdk.btrace.core.BTraceUtils.println;
+
+@BTrace
+public class TracingUserEntity {
+        @OnMethod(
+            clazz="com.itheima.jvmoptimize.entity.UserEntity",
+            method="/.*/")
+        public static void traceExecute(){
+                jstack();
+        }
+}
+```
+
+3、将btrace工具和脚本上传到服务器，在服务器上运行 `btrace 进程ID 脚本文件名` 。
+
+配置btrace环境变量，与JDK配置方式基本相同：
+
+![img](./assets/1733411770311-164.png)
+
+在服务器上运行 `btrace 进程ID 脚本文件名`:
+
+![img](./assets/1733411770311-165.png)
+
+4、观察执行结果。 启动jmeter之后，同样获取到了栈信息：
+
+![img](./assets/1733411770311-166.png)
+
+## 2、GC调优
+
+GC调优指的是对垃圾回收（Garbage Collection）进行调优。GC调优的主要目标是避免由垃圾回收引起程序性能下降。
+
+GC调优的核心分成三部分：
+
+1、通用Jvm参数的设置。
+
+2、特定垃圾回收器的Jvm参数的设置。
+
+3、解决由频繁的FULLGC引起的程序性能问题。
+
+GC调优没有没有唯一的标准答案，如何调优与硬件、程序本身、使用情况均有关系，重点学习调优的工具和方法。
+
+### 2.1 GC调优的核心指标
+
+所以判断GC是否需要调优，需要从三方面来考虑，与GC算法的评判标准类似：
+
+1.吞吐量(Throughput) 吞吐量分为业务吞吐量和垃圾回收吞吐量
+
+业务吞吐量指的在一段时间内，程序需要完成的业务数量。比如企业中对于吞吐量的要求可能会是这样的：
+
+支持用户每天生成10000笔订单
+
+在晚上8点到10点，支持用户查询50000条商品信息
+
+保证高吞吐量的常规手段有两条：
+
+1、优化业务执行性能，减少单次业务的执行时间
+
+2、优化垃圾回收吞吐量
+
+#### 2.1.1 垃圾回收吞吐量
+
+垃圾回收吞吐量指的是 CPU 用于执行用户代码的时间与 CPU 总执行时间的比值，即吞吐量 = 执行用户代码时间 /（执行用户代码时间 + GC时间）。吞吐量数值越高，垃圾回收的效率就越高，允许更多的CPU时间去处理用户的业务，相应的业务吞吐量也就越高。
+
+![img](./assets/1733411829684-502.png)
+
+![img](./assets/1733411829684-503.png)
+
+#### 2.1.2 延迟（Latency）
+
+1. 延迟指的是从用户发起一个请求到收到响应这其中经历的时间。比如企业中对于延迟的要求可能会是这样的：
+
+1. 所有的请求必须在5秒内返回给用户结果
+
+1. 延迟 = GC延迟 + 业务执行时间，所以如果GC时间过长，会影响到用户的使用。
+
+![img](./assets/1733411829684-504.png)
+
+#### 2.1.3 内存使用量
+
+1. 内存使用量指的是Java应用占用系统内存的最大值，一般通过Jvm参数调整，在满足上述两个指标的前提下，这个值越小越好。
+
+![img](./assets/1733411829684-505.png)
+
+### 2.2 GC调优的步骤
+
+![img](./assets/1733411829684-506.png)
+
+#### 2.2.1 发现问题 - 常用工具
+
+#####  jstat工具
+
+Jstat工具是JDK自带的一款监控工具，可以提供各种垃圾回收、类加载、编译信息
+
+等不同的数据。使用方法为：`jstat -gc 进程ID 每次统计的间隔（毫秒） 统计次数 `
+
+![img](./assets/1733411829685-507.png)
+
+C代表Capacity容量，U代表Used使用量
+
+S – 幸存者区，E – 伊甸园区，O – 老年代，M – 元空间
+
+YGC、YGT：年轻代GC次数和GC耗时（单位：秒）
+
+FGC、FGCT：Full GC次数和Full GC耗时
+
+GCT：GC总耗时
+
+优点：
+
+ 操作简单
+
+ 无额外的软件安装
+
+缺点：
+
+ 无法精确到GC产生的时间，只能用于判断GC是否存在问题 
+
+##### Visualvm插件
+
+VisualVm中提供了一款Visual GC插件，实时监控Java进程的堆内存结构、堆内存变化趋势以及垃圾回收时间的变化趋势。同时还可以监控对象晋升的直方图。
+
+![img](./assets/1733411829685-508.png)
+
+优点：
+
+ 适合开发使用，能直观的看到堆内存和GC的变化趋势
+
+缺点：
+
+ 对程序运行性能有一定影响
+
+ 生产环境程序员一般没有权限进行操作
+
+安装方法：
+
+1、打开插件页面
+
+![img](./assets/1733411829685-509.png)
+
+2、安装Visual GC插件
+
+![img](./assets/1733411829685-510.png)
+
+3、选择标签就可以看到内容：
+
+![img](./assets/1733411829685-511.png)
+
+##### Prometheus + Grafana
+
+Prometheus+Grafana是企业中运维常用的监控方案，其中Prometheus用来采系统或者应用的相关数据，同时具备告警功能。Grafana可以将Prometheus采集到的数据以可视化的方式进行展示。
+
+Java程序员要学会如何读懂Grafana展示的Java虚拟机相关的参数。
+
+![img](./assets/1733411829685-512.png)
+
+优点：
+
+ 支持系统级别和应用级别的监控，比如linux操作系统、Redis、MySQL、Java进程。
+
+ 支持告警并允许自定义告警指标，通过邮件、短信等方式尽早通知相关人员进行处理
+
+缺点：
+
+ 环境搭建较为复杂，一般由运维人员完成
+
+##### GC日志
+
+通过GC日志，可以更好的看到垃圾回收细节上的数据，同时也可以根据每款垃圾回收器的不同特点更好地发现存在的问题。
+
+使用方法（JDK 8及以下）：-XX:+PrintGCDetails  -Xloggc:文件名
+
+使用方法（JDK 9+）：-Xlog:gc*:file=文件名
+
+![img](./assets/1733411829685-513.png)
+
+1、添加虚拟机参数：
+
+![img](./assets/1733411829685-514.png)
+
+2、打开日志文件就可以看到GC日志
+
+![img](./assets/1733411829685-515.png)
+
+3、分析GC日志
+
+###### 分析GC日志 - GCViewer
+
+GCViewer是一个将GC日志转换成可视化图表的小工具，github地址： https://github.com/chewiebug/GCViewer 使用方法：java -jar gcviewer_1.3.4.jar 日志文件.log
+
+![img](./assets/1733411829685-516.png)
+
+右下角是基础信息，左边是内存趋势图
+
+![img](./assets/1733411829685-517.png)
+
+###### 分析GC日志 - GCEasy
+
+GCeasy是业界首款使用AI机器学习技术在线进行GC分析和诊断的工具。定位内存泄漏、GC延迟高的问题，提供JVM参数优化建议，支持在线的可视化工具图表展示。 官方网站：https://gceasy.io/ 
+
+![img](./assets/1733411829685-518.png)
+
+使用方法：
+
+1、选择文件，找到GC日志并上传
+
+![img](./assets/1733411829685-519.png)
+
+2、点击Analyze分析就可以看到报告，每个账号每个月能免费上传5个GC日志。
+
+建议部分：
+
+![img](./assets/1733411829685-520.png)
+
+内存情况：
+
+![img](./assets/1733411829685-521.png)
+
+GC关键性指标：
+
+![img](./assets/1733411829685-522.png)
+
+GC的趋势图：
+
+![img](./assets/1733411829685-523.png)
+
+引发GC的原因：
+
+![img](./assets/1733411829685-524.png)
+
+#### 2.2.2 常见的GC模式
+
+根据内存的趋势图，我们可以将GC的情况分成几种模式
+
+##### 1、正常情况
+
+特点：呈现锯齿状，对象创建之后内存上升，一旦发生垃圾回收之后下降到底部，并且每次下降之后的内存大小接近，存留的对象较少。
+
+![img](./assets/1733411829685-525.png)
+
+##### 2、缓存对象过多
+
+特点：呈现锯齿状，对象创建之后内存上升，一旦发生垃圾回收之后下降到底部，并且每次下降之后的内存大小接近，处于比较高的位置。
+
+问题产生原因： 程序中保存了大量的缓存对象，导致GC之后无法释放，可以使用MAT或者HeapHero等工具进行分析内存占用的原因。
+
+![img](./assets/1733411829685-526.png)
+
+##### 3、内存泄漏
+
+特点：呈现锯齿状，每次垃圾回收之后下降到的内存位置越来越高，最后由于垃圾回收无法释放空间导致对象无法分配产生OutOfMemory的错误。
+
+问题产生原因： 程序中保存了大量的内存泄漏对象，导致GC之后无法释放，可以使用MAT或者HeapHero等工具进行分析是哪些对象产生了内存泄漏。
+
+![img](./assets/1733411829686-527.png)
+
+##### 4、持续的FullGC
+
+特点：在某个时间点产生多次Full GC，CPU使用率同时飙高，用户请求基本无法处理。一段时间之后恢复正常。
+
+问题产生原因： 在该时间范围请求量激增，程序开始生成更多对象，同时垃圾收集无法跟上对象创建速率，导致持续地在进行FULL GC。GC分析报告
+
+![img](./assets/1733411829686-528.png)
+
+比如如下报告就产生了持续的FULL GC：
+
+![img](./assets/1733411829686-529.png)
+
+整体的延迟就变得很长：
+
+![img](./assets/1733411829686-530.png)
+
+原因就是老年代满了：
+
+![img](./assets/1733411829686-531.png)
+
+由于分配不了对象，导致频繁的FULLGC：
+
+![img](./assets/1733411829686-532.png)
+
+##### 5、元空间不足导致的FULLGC
+
+特点：堆内存的大小并不是特别大，但是持续发生FULLGC。
+
+问题产生原因： 元空间大小不足，导致持续FULLGC回收元空间的数据。GC分析报告
+
+ 元空间并不是满了才触发FULLGC，而是JVM自动会计算一个阈值，如下图中元空间并没有满，但是频繁产生了FULLGC。
+
+![img](./assets/1733411829686-533.png)
+
+停顿时间也比较长：
+
+![img](./assets/1733411829686-534.png)
+
+非常频繁的FULLGC:
+
+![img](./assets/1733411829686-535.png)
+
+#### 2.2.3 解决GC问题的手段
+
+解决GC问题的手段中，前三种是比较推荐的手段，第四种仅在前三种无法解决时选用：
+
+- 优化基础JVM参数，基础JVM参数的设置不当，会导致频繁FULLGC的产生
+- 减少对象产生，大多数场景下的FULLGC是由于对象产生速度过快导致的，减少对象产生可以有效的缓解FULLGC的发生
+- 更换垃圾回收器，选择适合当前业务场景的垃圾回收器，减少延迟、提高吞吐量
+- 优化垃圾回收器参数，优化垃圾回收器的参数，能在一定程度上提升GC效率
+
+##### 优化基础JVM参数
+
+**参数1 ： -Xmx 和 –Xms**
+
+-Xmx参数设置的是最大堆内存，但是由于程序是运行在服务器或者容器上，计算可用内存时，要将元空间、操作系统、其它软件占用的内存排除掉。
+
+案例： 服务器内存4G，操作系统+元空间最大值+其它软件占用1.5G，-Xmx可以设置为2g。
+
+最合理的设置方式应该是根据最大并发量估算服务器的配置，然后再根据服务器配置计算最大堆内存的值。
+
+![img](./assets/1733411829686-536.png)
+
+参数1 ： -Xmx 和 –Xms
+
+-Xms用来设置初始堆大小，建议将-Xms设置的和-Xmx一样大，有以下几点好处：
+
+- 运行时性能更好，堆的扩容是需要向操作系统申请内存的，这样会导致程序性能短期下降。
+- 可用性问题，如果在扩容时其他程序正在使用大量内存，很容易因为操作系统内存不足分配失败。
+- 启动速度更快，Oracle官方文档的原话：如果初始堆太小，Java 应用程序启动会变得很慢，因为 JVM 被迫频繁执行垃圾收集，直到堆增长到更合理的大小。为了获得最佳启动性能，请将初始堆大小设置为与最大堆大小相同。
+
+**参数2 ： -XX:MaxMetaspaceSize 和 –XX:MetaspaceSize**
+
+-XX:MaxMetaspaceSize=值  参数指的是最大元空间大小，默认值比较大，如果出现元空间内存泄漏会让操作系统可用内存不可控，建议根据测试情况设置最大值，一般设置为256m。
+
+-XX:MetaspaceSize=值 参数指的是到达这个值之后会触发FULLGC（网上很多文章的初始元空间大小是错误的），后续什么时候再触发JVM会自行计算。如果设置为和MaxMetaspaceSize一样大，就不会FULLGC，但是对象也无法回收。
+
+![img](./assets/1733411829686-537.png)
+
+计算出来第一次因元空间触发FULLGC的阈值：
+
+![img](./assets/1733411829686-538.png)
+
+**参数3 ： -Xss虚拟机栈大小**
+
+如果我们不指定栈的大小，JVM 将创建一个具有默认大小的栈。大小取决于操作系统和计算机的体系结构。
+
+比如Linux x86 64位 ： 1MB，如果不需要用到这么大的栈内存，完全可以将此值调小节省内存空间，合理值为256k – 1m之间。
+
+使用：-Xss256k
+
+**参数4 ： 不建议手动设置的参数**
+
+由于JVM底层设计极为复杂，一个参数的调整也许让某个接口得益，但同样有可能影响其他更多接口。
+
+-Xmn 年轻代的大小，默认值为整个堆的1/3，可以根据峰值流量计算最大的年轻代大小，尽量让对象只存放在年轻代，不进入老年代。但是实际的场景中，接口的响应时间、创建对象的大小、程序内部还会有一些定时任务等不确定因素都会导致这个值的大小并不能仅凭计算得出，如果设置该值要进行大量的测试。G1垃圾回收器尽量不要设置该值，G1会动态调整年轻代的大小。
+
+![img](./assets/1733411829686-539.png)
+
+‐XX:SurvivorRatio 伊甸园区和幸存者区的大小比例，默认值为8。
+
+‐XX:MaxTenuringThreshold 最大晋升阈值，年龄大于此值之后，会进入老年代。另外JVM有动态年龄判断机制：将年龄从小到大的对象占据的空间加起来，如果大于survivor区域的50%，然后把等于或大于该年龄的对象，放入到老年代。
+
+比如下图中，年龄1+年龄2+年龄3 = 55m已经超过了S区的50%，所以会将年龄3及以上的对象全部放入老年代。
+
+![img](./assets/1733411829686-540.png)
+
+**其他参数 ：**
+
+ -XX:+DisableExplicitGC
+
+禁止在代码中使用System.gc()， System.gc()可能会引起FULLGC，在代码中尽量不要使用。使用DisableExplicitGC参数可以禁止使用System.gc()方法调用。
+
+-XX:+HeapDumpOnOutOfMemoryError：发生OutOfMemoryError错误时，自动生成hprof内存快照文件。
+
+  -XX:HeapDumpPath=<path>：指定hprof文件的输出路径。
+
+打印GC日志
+
+JDK8及之前 ： -XX:+PrintGCDetails -XX:+PrintGCDateStamps -Xloggc:文件路径
+
+JDK9及之后 ： -Xlog:gc*:file=文件路径
+
+**JVM参数模板**
+
+```Java
+-Xms1g
+-Xmx1g
+-Xss256k
+-XX:MaxMetaspaceSize=512m 
+-XX:+DisableExplicitGC-XX:+HeapDumpOnOutOfMemoryError
+-XX:HeapDumpPath=/opt/logs/my-service.hprof-XX:+PrintGCDetails 
+-XX:+PrintGCDateStamps 
+-Xloggc:文件路径
+```
+
+注意：
+
+JDK9及之后gc日志输出修改为 -Xlog:gc*:file=文件名
+
+堆内存大小和栈内存大小根据实际情况灵活调整。
+
+##### 垃圾回收器的选择
+
+**背景**：
+
+小李负责的程序在高峰期遇到了性能瓶颈，团队从业务代码入手优化了多次也取得了不错的效果，这次他希望能采用更合理的垃圾回收器优化性能。
+
+**思路：**
+
+编写Jmeter脚本对程序进行压测，同时添加RT响应时间、每秒钟的事务数
+
+等指标进行监控。
+
+选择不同的垃圾回收器进行测试，并发量分别设置50、100、200，观察
+
+数据的变化情况。
+
+3. JDK8 下 ParNew + CMS 组合 ： -XX:+UseParNewGC -XX:+UseConcMarkSweepGC
+
+​                 默认组合 ： PS + PO
+
+​    JDK8使用g1 : -XX:+UseG1GC    JDK11 默认 g1
+
+**测试用代码：**
+
+```
+com.itheima.jvmoptimize.fullgcdemo.Demo2Controller
+```
+
+1、使用jmeter测试脚本
+
+![img](./assets/1733411829686-541.png)
+
+2、添加基础JVM测试参数：
+
+```Java
+-Xms8g -Xmx8g -Xss256k -XX:MaxMetaspaceSize=512m  -XX:+DisableExplicitGC -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=D:/test.hprof  -verbose:gc -XX:+PrintGCDetails -XX:+PrintGCTimeStamps
+```
+
+JDK8默认情况下测试的是PS+PO组合 
+
+###### 测试结果：
+
+| 垃圾回收器 | 参数                                       | 50并发（最大响应时间） | 100并发（最大响应时间） | 200并发（最大响应时间） |
+| ---------- | ------------------------------------------ | ---------------------- | ----------------------- | ----------------------- |
+| PS+PO      | 默认                                       | 260ms                  | 474ms                   | 930ms                   |
+| CMS        | *-XX:+UseParNewGC -XX:+UseConcMarkSweepGC* | 157ms                  | 未测试                  | 833ms                   |
+| G1         | JDK11默认                                  | 未测试                 | 未测试                  | 248ms                   |
+
+由此可见使用了JDK11之后使用G1垃圾回收器，性能优化结果还是非常明显的。其他测试数据同学们有兴趣可以自行去测试一下。
+
+##### 优化垃圾回收器的参数
+
+这部分优化效果未必出色，仅当前边的一些手动无效时才考虑。
+
+一个优化的案例：
+
+CMS的并发模式失败（concurrent mode failure）现象。由于CMS的垃圾清理线程和用户线程是并行进行的，如果在并发清理的过程中老年代的空间不足以容纳放入老年代的对象，会产生并发模式失败。
+
+![img](./assets/1733411829686-542.png)
+
+老年代已经满了此时有一些对象要晋升到老年代：
+
+![img](./assets/1733411829686-543.png)
+
+解决方案：
+
+1.减少对象的产生以及对象的晋升。
+
+2.增加堆内存大小
+
+3.优化垃圾回收器的参数，比如-XX:CMSInitiatingOccupancyFraction=值，当老年代大小到达该阈值时，会自动进行CMS垃圾回收，通过控制这个参数提前进行老年代的垃圾回收，减少其大小。
+
+JDK8中默认这个参数值为 -1，根据其他几个参数计算出阈值：
+
+((100 - MinHeapFreeRatio) + (double)(CMSTriggerRatio * MinHeapFreeRatio) / 100.0)
+
+在我本机计算之后的结果是92：
+
+![img](./assets/1733411829686-544.png)
+
+该参数设置完是不会生效的，必须开启-XX:+UseCMSInitiatingOccupancyOnly参数。
+
+调整前和调整之后的效果对比：
+
+![img](./assets/1733411829686-545.png)
+
+很明显FULLGC产生的次数下降了。
+
+#### 2.2.4 案例实战
+
+**背景：**
+
+小李负责的程序在高峰期经常会出现接口调用时间特别长的现象，他希望能优化程序的性能。
+
+**思路：**
+
+生成GC报告，通过Gceasy工具进行分析，判断是否存在GC问题或者内存问题。
+
+存在内存问题，通过jmap或者arthas将堆内存快照保存下来。
+
+通过MAT或者在线的heaphero工具分析内存问题的原因。
+
+修复问题，并发布上线进行测试。
+
+**测试代码**：`com.itheima.jvmoptimize.fullgcdemo.Practice`
+
+JVM参数：
+
+```Java
+-Xms1g -Xmx1g -Xss256k    -XX:MaxMetaspaceSize=256m  -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:+PrintGCDateStamps  -XX:+PrintGCDetails -XX:+DisableExplicitGC -Xloggc:D:/test.log
+```
+
+1、打开测试脚本：
+
+![img](./assets/1733411829686-546.png)
+
+2、发现有几笔响应时间特别长的请求，怀疑是GC引起的：
+
+![img](./assets/1733411829686-547.png)
+
+3、把GC日志上传到GCEasy之后发现内存占用情况很严重：
+
+![img](./assets/1733411829686-548.png)
+
+出现了几次FULLGC,并且FULL GC之后，内存占用也有160m左右:
+
+![img](./assets/1733411829686-549.png)
+
+##### 问题1：
+
+发生了连续的FULL GC,堆内存1g如果没有请求的情况下，内存大小在200-300mb之间。
+
+分析：
+
+没有请求的情况下，内存大小并没有处于很低的情况，满足缓存对象过多的情况，怀疑内存种缓存了很多数据。需要将堆内存快照保存下来进行分析。
+
+![img](./assets/1733411829686-550.png)
+
+1、在本地测试，通过visualvm将hprof文件保存下来：
+
+![img](./assets/1733411829687-551.png)
+
+2、通过Heap Hero分析文件，操作方式与GCEasy相同，上传的是hprof文件：
+
+![img](./assets/1733411829687-552.png)
+
+但是我们发现，生成的文件非常小，与接近200m大小不符：
+
+![img](./assets/1733411829687-553.png)
+
+3、怀疑有些对象已经可以回收，所以没有下载下来。使用jmap调整下参数，将live参数去掉，这样即便是垃圾对象也能保存下来：
+
+![img](./assets/1733411829687-554.png)
+
+4、在MAT中分析，选择不可达对象直方图：
+
+![img](./assets/1733411829687-555.png)
+
+5、大量的对象都是字节数组对象：
+
+![img](./assets/1733411829687-556.png)
+
+6.那么这些对象是如何产生的呢？继续往下来，捕捉到有大量的线程对象，如果没有发现这个点，只能去查代码看看哪里创建了大量的字节数组了：
+
+![img](./assets/1733411829687-557.png)
+
+##### 问题2：
+
+由于这些对象已经不在引用链上，无法通过支配树等手段分析创建的位置。
+
+分析：
+
+在不可达对象列表中，除了发现大量的byte[]还发现了大量的线程，可以考虑跟踪线程的栈信息来判断对象在哪里创建。
+
+1、在VisualVM中使用采样功能，对内存采样：
+
+![img](./assets/1733411829687-558.png)
+
+2、观察到这个线程一直在发生变化，说明有线程频繁创建销毁：
+
+![img](./assets/1733411829687-559.png)
+
+3、选择线程功能，保存线程栈：
+
+![img](./assets/1733411829687-560.png)
+
+4、抓到了一个线程，线程后边的ID很大，说明已经创建过很多线程了：
+
+![img](./assets/1733411829687-561.png)
+
+5、通过栈信息找到源代码：
+
+![img](./assets/1733411829687-562.png)
+
+这里有个定时任务，每隔200ms就创建线程。
+
+问题产生原因：
+
+在定时任务中通过线程创建了大量的对象，导致堆内存一直处于比较高的位置。
+
+ 
+
+解决方案：
+
+暂时先将这段代码注释掉，测试效果，由于这个服务本身的内存压力比较大，将这段定时任务移动到别的服务中。
+
+##### 问题3：
+
+修复之后内存基本上处于100m左右，但是当请求发生时，依然有频繁FULL GC的发生。
+
+分析：
+
+请求产生的内存大小比当前最大堆内存大，尝试选择配置更高的服务器，将-Xmx和-Xms参数调大一些。
+
+![img](./assets/1733411829687-563.png)
+
+当前的堆内存大小无法支撑请求量，所以要不就将请求量降下来，比如限制tomcat线程数、限流，或者提升服务器配置，增大堆内存。
+
+调整为4G之后的效果，FULLGC数量很少：
+
+![img](./assets/1733411829687-564.png)
+
+##### 案例总结：
+
+1、压力比较大的服务中，尽量不要存放大量的缓存或者定时任务，会影响到服务的内存使用。
+
+2、内存分析发现有大量线程创建时，可以使用导出线程栈来查看线程的运行情况。
+
+3、如果请求确实创建了大量的内存超过了内存上限，只能考虑减少请求时创建的对象，或者使用更大的内存。
+
+4、推荐使用g1垃圾回收器，并且使用较新的JDK可以获得更好的性能。
+
+
+
+## 3、性能调优
+
+### 3.1 性能调优解决的问题
+
+应用程序在运行过程中经常会出现性能问题，比较常见的性能问题现象是：
+
+1、通过top命令查看CPU占用率高，接近100甚至多核CPU下超过100都是有可能的。
+
+![img](./assets/1733411881296-691.png)
+
+2、请求单个服务处理时间特别长，多服务使用skywalking等监控系统来判断是哪一个环节性能低下。
+
+![img](./assets/1733411881297-692.png)
+
+3、程序启动之后运行正常，但是在运行一段时间之后无法处理任何的请求（内存和GC正常）。
+
+### 3.2 性能调优的方法
+
+线程转储（Thread Dump）提供了对所有运行中的线程当前状态的快照。线程转储可以通过jstack、visualvm等工具获取。其中包含了线程名、优先级、线程ID、线程状态、线程栈信息等等内容，可以用来解决CPU占用率高、死锁等问题。
+
+![img](./assets/1733411881297-693.png)
+
+1、通过jps查看进程ID：
+
+![img](./assets/1733411881297-694.png)
+
+2、通过`jstack 进程ID`查看线程栈信息：
+
+![img](./assets/1733411881297-695.png)
+
+3、通过`jstack 进程ID > 文件名`导出线程栈文件
+
+![img](./assets/1733411881297-696.png)
+
+线程转储（Thread Dump）中的几个核心内容： 名称： 线程名称，通过给线程设置合适的名称更容易“见名知意” 优先级（prio）：线程的优先级 Java ID（tid）：JVM中线程的唯一ID 本地 ID (nid)：操作系统分配给线程的唯一ID 状态：线程的状态，分为： NEW – 新创建的线程，尚未开始执行 RUNNABLE –正在运行或准备执行 BLOCKED – 等待获取监视器锁以进入或重新进入同步块/方法 WAITING – 等待其他线程执行特定操作，没有时间限制 TIMED_WAITING – 等待其他线程在指定时间内执行特定操作 TERMINATED – 已完成执行 栈追踪： 显示整个方法的栈帧信息 线程转储的可视化在线分析平台： 1、 https://jstack.review/ 2、 https://fastthread.io/
+
+#### 解决CPU占用率高的问题
+
+应用程序在运行过程中经常会出现性能问题，比较常见的性能问题现象是：
+
+1、通过top命令查看CPU占用率高，接近100甚至多核CPU下超过100都是有可能的。
+
+2、请求单个服务处理时间特别长，多服务使用skywalking等监控系统来判断是哪一个环节性能低下。
+
+3、程序启动之后运行正常，但是在运行一段时间之后无法处理任何的请求（内存和GC正常）。
+
+问题：
+
+监控人员通过prometheus的告警发现CPU占用率一直处于很高的情况，通过top命令看到是由于Java程序引起的，希望能快速定位到是哪一部分代码导致了性能问题。
+
+解决思路：
+
+1、通过top –c 命令找到CPU占用率高的进程，获取它的进程ID。
+
+![img](./assets/1733411881297-697.png)
+
+2、使用top -p 进程ID单独监控某个进程，按H可以查看到所有的线程以及线程对应的CPU使用率，找到CPU使用率特别高的线程。
+
+![img](./assets/1733411881297-698.png)
+
+3、使用 jstack 进程ID 命令可以查看到所有线程正在执行的栈信息。使用 jstack 进程ID > 文件名 保存到文件中方便查看。
+
+![img](./assets/1733411881297-699.png)
+
+![img](./assets/1733411881297-700.png)
+
+4、找到nid线程ID相同的栈信息，需要将之前记录下的十进制线程号转换成16进制。通过 printf ‘%x\n’ 线程ID 命令直接获得16进制下的线程ID。
+
+![img](./assets/1733411881298-701.png)
+
+![img](./assets/1733411881298-702.png)
+
+5、找到栈信息对应的源代码，并分析问题产生原因。
+
+在定位CPU占用率高的问题时，比较需要关注的是状态为RUNNABLE的线程。但实际上，有一些线程执行本地方法时并不会消耗CPU，而只是在等待。但 JVM 仍然会将它们标识成“RUNNABLE”状态。
+
+![img](./assets/1733411881299-703.png)
+
+### 3.3 案例实战
+
+#### 案例2：接口响应时间很长的问题
+
+问题：
+
+在程序运行过程中，发现有几个接口的响应时间特别长，需要快速定位到是哪一个方法的代码执行过程中出现了性能问题。
+
+解决思路：
+
+已经确定是某个接口性能出现了问题，但是由于方法嵌套比较深，需要借助于arthas定位到具体的方法。
+
+比如调用链是A方法 -> B方法 -> C方法 -> D方法，整体耗时较长。我们需要定位出来是C方法慢导致的问题。
+
+![img](./assets/1733411881299-704.png)
+
+##### trace命令监控
+
+使用arthas的trace命令，可以展示出整个方法的调用路径以及每一个方法的执行耗时。
+
+命令： `trace 类名 方法名`
+
+添加 `--skipJDKMethod false` 参数可以输出JDK核心包中的方法及耗时。
+
+添加 ‘#cost > 毫秒值’ 参数，只会显示耗时超过该毫秒值的调用。
+
+添加 `–n 数值` 参数，最多显示该数值条数的数据。
+
+所有监控都结束之后，输入`stop`结束监控，重置arthas增强的对象。
+
+测试方法：
+
+```
+com.itheima.jvmoptimize.performance.PerformanceController.a()
+```
+
+1、使用trace命令，监控方法的执行：
+
+![img](./assets/1733411881299-705.png)
+
+2、发起一次请求调用：
+
+![img](./assets/1733411881299-706.png)
+
+3、显示出了方法调用的耗时占比：
+
+![img](./assets/1733411881300-707.png)
+
+4、添加 `--skipJDKMethod false` 参数可以输出JDK核心包中的方法及耗时：
+
+![img](./assets/1733411881300-708.png)
+
+5、添加 ‘#cost > 1000’ 参数，只显示耗时超过1秒的调用。
+
+![img](./assets/1733411881300-709.png)
+
+6、添加 `–n 1` 参数，最多显示1条数据，避免数据太多看起来不清晰。
+
+![img](./assets/1733411881300-710.png)
+
+7、所有监控都结束之后，输入`stop`结束监控，重置arthas增强的对象。避免对性能产生影响。
+
+![img](./assets/1733411881300-711.png)
+
+##### watch命令监控
+
+在使用trace定位到性能较低的方法之后，使用watch命令监控该方法，可以获得更为详细的方法信息。
+
+命令：  
+
+```
+watch 类名 方法名 ‘{params, returnObj}’ ‘#cost>毫秒值' -x 2
+```
+
+`‘{params, returnObj}‘` 代表打印参数和返回值。
+
+`-x` 代表打印的结果中如果有嵌套（比如对象里有属性），最多只展开2层。允许设置的最大值为4。
+
+测试方法：
+
+```
+com.itheima.jvmoptimize.performance.PerformanceController.a()
+```
+
+1、执行命令，发起一笔接口调用：
+
+![img](./assets/1733411881300-712.png)
+
+![img](./assets/1733411881300-713.png)
+
+2、cost = 1565ms代表方法执行时间是1.56秒，result = 后边是参数的内容，首先是一个集合（既可以获取返回值，也可以获取参数），第一个数组就是参数，里边只有一个元素是一个整数值为1。
+
+![img](./assets/1733411881300-714.png)
+
+总结：
+
+1、通过arthas的trace命令，首先找到性能较差的具体方法，如果访问量比较大，建议设置最小的耗时，精确的找到耗时比较高的调用。
+
+2、通过watch命令，查看此调用的参数和返回值，重点是参数，这样就可以在开发环境或者测试环境模拟类似的现象，通过debug找到具体的问题根源。
+
+3、使用stop命令将所有增强的对象恢复。
+
+#### 案例3：定位偏底层的性能问题
+
+问题：
+
+有一个接口中使用了for循环向ArrayList中添加数据，但是最终发现执行时间比较长，需要定位是由于什么原因导致的性能低下。
+
+解决思路：
+
+Arthas提供了性能火焰图的功能，可以非常直观地显示所有方法中哪些方法执行时间比较长。
+
+![img](./assets/1733411881300-715.png)
+
+测试方法：
+
+```
+com.itheima.jvmoptimize.performance.PerformanceController.test6()
+```
+
+使用arthas的profile命令，生成性能监控的火焰图。
+
+命令1：  profiler start  开始监控方法执行性能
+
+命令2：  profiler stop --format html  以HTML的方式生成火焰图
+
+火焰图中一般找绿色部分Java中栈顶上比较平的部分，很可能就是性能的瓶颈。
+
+1、使用命令开始监控：
+
+![img](./assets/1733411881300-716.png)
+
+2、发送请求测试：
+
+![img](./assets/1733411881300-717.png)
+
+3、执行命令结束，并生成火焰图的HTML
+
+![img](./assets/1733411881300-718.png)
+
+4、观察火焰图的结果：
+
+![img](./assets/1733411881300-719.png)
+
+火焰图中重点关注左边部分，是我们自己编写的代码的执行性能，右边是Java虚拟机底层方法的性能。火焰图中会展示出Java虚拟机自身方法执行的时间。
+
+火焰图中越宽的部分代表执行时间越长，比如：
+
+![img](./assets/1733411881300-720.png)
+
+很明显ArrayList类中的add方法调用花费了大量的时间，这其中可以发现一个copyOf方法，数组的拷贝占用时间较多。
+
+观察源码可以知道，频繁的扩容需要多次将老数组中的元素复制到新数组，浪费了大量的时间。
+
+![img](./assets/1733411881301-721.png)
+
+在ArrayList的构造方法中，设置一下最大容量，一开始就让它具备这样的大小，避免频繁扩容带来的影响：
+
+![img](./assets/1733411881301-722.png)
+
+最终这部分开销就没有了，宽度变大是因为我放大了这张图：
+
+![img](./assets/1733411881301-723.png)
+
+总结：
+
+偏底层的性能问题，特别是由于JDK中某些方法被大量调用导致的性能低下，可以使用火焰图非常直观的找到原因。
+
+这个案例中是由于创建ArrayList时没有手动指定容量，导致使用默认的容量而在添加对象过程中发生了多次的扩容，扩容需要将原来数组中的元素复制到新的数组中，消耗了大量的时间。通过火焰图可以看到大量的调用，修复完之后节省了20% ~ 50%的时间。
+
+#### 案例4：线程被耗尽问题
+
+问题：
+
+程序在启动运行一段时间之后，就无法接受任何请求了。将程序重启之后继续运行，依然会出现相同的情况。
+
+解决思路：
+
+线程耗尽问题，一般是由于执行时间过长，分析方法分成两步：
+
+1、检测是否有死锁产生，无法自动解除的死锁会将线程永远阻塞。
+
+2、如果没有死锁，再使用案例1的打印线程栈的方法检测线程正在执行哪个方法，一般这些大量出现的方法就是慢方法。
+
+死锁：两个或以上的线程因为争夺资源而造成互相等待的现象。
+
+死锁问题，学习黑马程序员《JUC并发编程》相关章节。 地址 ： https://www.bilibili.com/video/BV16J411h7Rd?p=115
+
+![img](./assets/1733411881301-724.png)
+
+解决方案：
+
+线程死锁可以通过三种方法定位问题：
+
+测试方法：
+
+```
+com.itheima.jvmoptimize.performance.PerformanceController.test6()
+com.itheima.jvmoptimize.performance.PerformanceController.test7()
+```
+
+先调用deadlock1(test6)方法
+
+![img](./assets/1733411881302-725.png)
+
+再调用deadlock2(test7)方法，就可以产生死锁
+
+![img](./assets/1733411881302-726.png)
+
+1、 jstack -l 进程ID > 文件名  将线程栈保存到本地。
+
+![img](./assets/1733411881302-727.png)
+
+在文件中搜索deadlock即可找到死锁位置：
+
+![img](./assets/1733411881302-728.png)
+
+2、 开发环境中使用visual vm或者Jconsole工具，都可以检测出死锁。使用线程快照生成工具就可以看到死锁的根源。生产环境的服务一般不会允许使用这两种工具连接。
+
+![img](./assets/1733411881302-729.png)
+
+3、使用fastthread自动检测线程问题。 https://fastthread.io/ Fastthread和Gceasy类似，是一款在线的AI自动线程问题检测工具，可以提供线程分析报告。通过报告查看是否存在死锁问题。
+
+在visualvm中保存线程栈：
+
+![img](./assets/1733411881302-730.png)
+
+选择文件并点击分析：
+
+![img](./assets/1733411881302-731.png)
+
+死锁分析报告：
+
+![img](./assets/1733411881302-732.png)
+
+### 3.4 JMH基准测试框架
+
+面试中容易问到性能测试问题：
+
+![img](./assets/1733411881302-733.png)
+
+Java程序在运行过程中，JIT即时编译器会实时对代码进行性能优化，所以仅凭少量的测试是无法真实反应运行系统最终给用户提供的性能。如下图，随着执行次数的增加，程序性能会逐渐优化。
+
+![img](./assets/1733411881302-734.png)
+
+所以简单地打印时间是不准确的，JIT有可能还没有对程序进行性能优化，我们拿到的测试数据和最终用户使用的数据是不一致的。
+
+OpenJDK中提供了一款叫JMH（Java Microbenchmark Harness）的工具，可以准确地对Java代码进行基准测试，量化方法的执行性能。 官网地址：https://github.com/openjdk/jmhc JMH会首先执行预热过程，确保JIT对代码进行优化之后再进行真正的迭代测试，最后输出测试的结果。
+
+![img](./assets/1733411881302-735.png)
+
+#### JMH环境搭建：
+
+创建基准测试项目，在CMD窗口中，使用以下命令创建JMH环境项目：
+
+```Shell
+mvn archetype:generate \
+-DinteractiveMode=false \
+-DarchetypeGroupId=org.openjdk.jmh \
+-DarchetypeArtifactId=jmh-java-benchmark-archetype \
+-DgroupId=org.sample \
+-DartifactId=test \
+-Dversion=1.0
+```
+
+修改POM文件中的JDK版本号和JMH版本号，JMH最新版本号参考Github。
+
+![img](./assets/1733411881302-736.png)
+
+编写测试方法，几个需要注意的点：
+
+- 死代码问题
+- 黑洞的用法
+
+初始代码：
+
+```Java
+package org.sample;
+
+import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.results.format.ResultFormatType;
+import org.openjdk.jmh.runner.Runner;
+import org.openjdk.jmh.runner.RunnerException;
+import org.openjdk.jmh.runner.options.Options;
+import org.openjdk.jmh.runner.options.OptionsBuilder;
+
+import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Date;
+import java.util.concurrent.TimeUnit;
+
+//执行5轮预热，每次持续1秒
+@Warmup(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)
+//执行一次测试
+@Fork(value = 1, jvmArgsAppend = {"-Xms1g", "-Xmx1g"})
+//显示平均时间，单位纳秒
+@BenchmarkMode(Mode.AverageTime)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
+@State(Scope.Benchmark)
+public class HelloWorldBench {
+
+    @Benchmark
+    public int test1() {
+        int i = 0;
+        i++;
+        return i;
+    }
+
+    public static void main(String[] args) throws RunnerException {
+        Options opt = new OptionsBuilder()
+                .include(HelloWorldBench.class.getSimpleName())
+                .resultFormat(ResultFormatType.JSON)
+                .forks(1)
+                .build();
+
+        new Runner(opt).run();
+    }
+}
+```
+
+如果不降i返回，JIT会直接将这段代码去掉，因为它认为你不会使用*i那么我们对i进行的任何处理都是没有意义的，这种代码无法执行的现象称之为**`死代码`*
+
+![img](./assets/1733411881302-737.png)
+
+![img](./assets/1733411881302-738.png)
+
+我们可以将i返回，或者添加黑洞来消费这些变量，让JIT无法消除这些代码:
+
+![img](./assets/1733411881302-739.png)
+
+![img](./assets/1733411881302-740.png)
+
+通过maven的verify命令，检测代码问题并打包成jar包。通过 java -jar target/benchmarks.jar 命令执行基准测试。
+
+添加这行参数，可以生成JSON文件，测试结果通过https://jmh.morethan.io/生成可视化的结果。
+
+![img](./assets/1733411881303-741.png)
+
+#### 案例：日期格式化方法性能测试 问题：
+
+在JDK8中，可以使用Date进行日期的格式化，也可以使用LocalDateTime进行格式化，使用JMH对比这两种格式化的性能。
+
+**解决思路：**
+
+1、搭建JMH测试环境。
+
+2、编写JMH测试代码。
+
+3、进行测试。
+
+4、比对测试结果。
+
+```Java
+package org.sample;
+
+import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.results.format.ResultFormatType;
+import org.openjdk.jmh.runner.Runner;
+import org.openjdk.jmh.runner.RunnerException;
+import org.openjdk.jmh.runner.options.Options;
+import org.openjdk.jmh.runner.options.OptionsBuilder;
+
+import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Date;
+import java.util.concurrent.TimeUnit;
+
+//执行5轮预热，每次持续1秒
+@Warmup(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)
+//执行一次测试
+@Fork(value = 1, jvmArgsAppend = {"-Xms1g", "-Xmx1g"})
+//显示平均时间，单位纳秒
+@BenchmarkMode(Mode.AverageTime)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
+@State(Scope.Thread)
+public class DateBench {
+
+
+    private static String sDateFormatString = "yyyy-MM-dd HH:mm:ss";
+    private Date date = new Date();
+    private LocalDateTime localDateTime = LocalDateTime.now();
+    private static ThreadLocal<SimpleDateFormat> simpleDateFormatThreadLocal = new ThreadLocal();
+    private static final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    @Setup
+    public void setUp() {
+
+        SimpleDateFormat sdf = new SimpleDateFormat(sDateFormatString);
+        simpleDateFormatThreadLocal.set(sdf);
+
+    }
+
+    @Benchmark
+    public String date() {
+        SimpleDateFormat simpleDateFormat = new SimpleDateFormat(sDateFormatString);
+        return simpleDateFormat.format(date);
+    }
+
+    @Benchmark
+    public String localDateTime() {
+        return localDateTime.format(formatter);
+    }
+    @Benchmark
+    public String localDateTimeNotSave() {
+        return localDateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+    }
+
+    @Benchmark
+    public String dateThreadLocal() {
+        return simpleDateFormatThreadLocal.get().format(date);
+    }
+
+
+    public static void main(String[] args) throws RunnerException {
+        Options opt = new OptionsBuilder()
+                .include(DateBench.class.getSimpleName())
+                .resultFormat(ResultFormatType.JSON)
+                .forks(1)
+                .build();
+
+        new Runner(opt).run();
+    }
+}
+```
+
+### 3.5 性能调优综合案例
+
+问题：
+
+小李的项目中有一个获取用户信息的接口性能比较差，他希望能对这个接口在代码中进行彻底的优化，提升性能。
+
+解决思路：
+
+1、使用trace分析性能瓶颈。
+
+2、优化代码，反复使用trace测试性能提升的情况。
+
+3、使用JMH在SpringBoot环境中进行测试。
+
+4、比对测试结果。
+
+```Java
+package com.itheima.jvmoptimize.performance.practice.controller;
+
+import com.itheima.jvmoptimize.performance.practice.entity.User;
+import com.itheima.jvmoptimize.performance.practice.entity.UserDetails;
+import com.itheima.jvmoptimize.performance.practice.service.UserService;
+import com.itheima.jvmoptimize.performance.practice.vo.UserVO;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.text.SimpleDateFormat;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+@RestController
+@RequestMapping("/puser")
+public class UserController {
+
+    @Autowired
+    private UserService userService;
+
+    private final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    //初始代码
+    public List<UserVO> user1(){
+        //1.从数据库获取前端需要的详情数据
+        List<UserDetails> userDetails = userService.getUserDetails();
+
+        //2.获取缓存中的用户数据
+        List<User> users = userService.getUsers();
+
+        SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        //3.遍历详情集合，从缓存中获取用户名，生成VO进行填充
+        ArrayList<UserVO> userVOS = new ArrayList<>();
+        for (UserDetails userDetail : userDetails) {
+            UserVO userVO = new UserVO();
+            //可以使用BeanUtils对象拷贝
+            userVO.setId(userDetail.getId());
+            userVO.setRegister(simpleDateFormat.format(userDetail.getRegister2()));
+            //填充name
+            for (User user : users) {
+                if(user.getId().equals(userDetail.getId())){
+                    userVO.setName(user.getName());
+                }
+            }
+            //加入集合
+            userVOS.add(userVO);
+        }
+
+        return userVOS;
+
+    }
+
+
+    //使用HasmMap存放用户名字
+    public List<UserVO> user2(){
+        //1.从数据库获取前端需要的详情数据
+        List<UserDetails> userDetails = userService.getUserDetails();
+
+        //2.获取缓存中的用户数据
+        List<User> users = userService.getUsers();
+        //将list转换成hashmap
+        HashMap<Long, User> map = new HashMap<>();
+        for (User user : users) {
+            map.put(user.getId(),user);
+        }
+
+        SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        //3.遍历详情集合，从缓存中获取用户名，生成VO进行填充
+        ArrayList<UserVO> userVOS = new ArrayList<>();
+        for (UserDetails userDetail : userDetails) {
+            UserVO userVO = new UserVO();
+            //可以使用BeanUtils对象拷贝
+            userVO.setId(userDetail.getId());
+            userVO.setRegister(simpleDateFormat.format(userDetail.getRegister2()));
+            //填充name
+            userVO.setName(map.get(userDetail.getId()).getName());
+            //加入集合
+            userVOS.add(userVO);
+        }
+
+        return userVOS;
+
+    }
+
+
+    //优化日期格式化
+    public List<UserVO> user3(){
+        //1.从数据库获取前端需要的详情数据
+        List<UserDetails> userDetails = userService.getUserDetails();
+
+        //2.获取缓存中的用户数据
+        List<User> users = userService.getUsers();
+        //将list转换成hashmap
+        HashMap<Long, User> map = new HashMap<>();
+        for (User user : users) {
+            map.put(user.getId(),user);
+        }
+
+        //3.遍历详情集合，从缓存中获取用户名，生成VO进行填充
+        ArrayList<UserVO> userVOS = new ArrayList<>();
+        for (UserDetails userDetail : userDetails) {
+            UserVO userVO = new UserVO();
+            //可以使用BeanUtils对象拷贝
+            userVO.setId(userDetail.getId());
+            userVO.setRegister(userDetail.getRegister().format(formatter));
+            //填充name
+            userVO.setName(map.get(userDetail.getId()).getName());
+            //加入集合
+            userVOS.add(userVO);
+        }
+
+        return userVOS;
+
+    }
+
+    @GetMapping
+    //使用stream流改写for循环
+    public List<UserVO> user4(){
+        //1.从数据库获取前端需要的详情数据
+        List<UserDetails> userDetails = userService.getUserDetails();
+
+        //2.获取缓存中的用户数据
+        List<User> users = userService.getUsers();
+        //将list转换成hashmap
+        Map<Long, User> map = users.stream().collect(Collectors.toMap(User::getId, o -> o));
+
+        //3.遍历详情集合，从缓存中获取用户名，生成VO进行填充
+        return userDetails.stream().map(userDetail -> {
+            UserVO userVO = new UserVO();
+            //可以使用BeanUtils对象拷贝
+            userVO.setId(userDetail.getId());
+            userVO.setRegister(userDetail.getRegister().format(formatter));
+            //填充name
+            userVO.setName(map.get(userDetail.getId()).getName());
+            return userVO;
+        }).collect(Collectors.toList());
+
+    }
+
+    //使用并行流优化性能
+    public List<UserVO> user5(){
+        //1.从数据库获取前端需要的详情数据
+        List<UserDetails> userDetails = userService.getUserDetails();
+
+        //2.获取缓存中的用户数据
+        List<User> users = userService.getUsers();
+        //将list转换成hashmap
+        Map<Long, User> map = users.parallelStream().collect(Collectors.toMap(User::getId, o -> o));
+
+        //3.遍历详情集合，从缓存中获取用户名，生成VO进行填充
+        return userDetails.parallelStream().map(userDetail -> {
+            UserVO userVO = new UserVO();
+            //可以使用BeanUtils对象拷贝
+            userVO.setId(userDetail.getId());
+            userVO.setRegister(userDetail.getRegister().format(formatter));
+            //填充name
+            userVO.setName(map.get(userDetail.getId()).getName());
+            return userVO;
+        }).collect(Collectors.toList());
+
+    }
+}
+```
+
+在SpringBoot项目中整合JMH:
+
+1、pom文件中添加依赖:
+
+```XML
+<dependency>
+    <groupId>org.openjdk.jmh</groupId>
+    <artifactId>jmh-core</artifactId>
+    <version>${jmh.version}</version>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>org.openjdk.jmh</groupId>
+    <artifactId>jmh-generator-annprocess</artifactId>
+    <version>${jmh.version}</version>
+    <scope>test</scope>
+</dependency>
+<properties>
+    <java.version>8</java.version>
+    <jmh.version>1.37</jmh.version>
+</properties>
+```
+
+2、测试类中编写:
+
+```Java
+package com.itheima.jvmoptimize;
+
+import com.itheima.jvmoptimize.performance.practice.controller.UserController;
+import org.junit.jupiter.api.Test;
+import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.infra.Blackhole;
+import org.openjdk.jmh.results.format.ResultFormatType;
+import org.openjdk.jmh.runner.Runner;
+import org.openjdk.jmh.runner.RunnerException;
+import org.openjdk.jmh.runner.options.OptionsBuilder;
+import org.springframework.boot.SpringApplication;
+import org.springframework.context.ApplicationContext;
+
+import java.io.IOException;
+import java.util.concurrent.TimeUnit;
+
+//执行5轮预热，每次持续1秒
+@Warmup(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)
+//执行一次测试
+@Fork(value = 1, jvmArgsAppend = {"-Xms1g", "-Xmx1g"})
+//显示平均时间，单位纳秒
+@BenchmarkMode(Mode.AverageTime)
+@OutputTimeUnit(TimeUnit.MILLISECONDS)
+@State(Scope.Benchmark)
+public class PracticeBenchmarkTest {
+
+    private UserController userController;
+    private ApplicationContext context;
+
+    //初始化将springboot容器启动 端口号随机
+    @Setup
+    public void setup() {
+        this.context = new SpringApplication(JvmOptimizeApplication.class).run();
+        userController = this.context.getBean(UserController.class);
+    }
+
+    //启动这个测试用例进行测试
+    @Test
+    public void executeJmhRunner() throws RunnerException, IOException {
+
+        new Runner(new OptionsBuilder()
+                .shouldDoGC(true)
+                .forks(0)
+                .resultFormat(ResultFormatType.JSON)
+                .shouldFailOnError(true)
+                .build()).run();
+    }
+
+    //用黑洞消费数据，避免JIT消除代码
+    @Benchmark
+    public void test1(final Blackhole bh) {
+
+        bh.consume(userController.user1());
+    }
+
+    @Benchmark
+    public void test2(final Blackhole bh) {
+
+        bh.consume(userController.user2());
+    }
+
+    @Benchmark
+    public void test3(final Blackhole bh) {
+
+        bh.consume(userController.user3());
+    }
+
+    @Benchmark
+    public void test4(final Blackhole bh) {
+
+        bh.consume(userController.user4());
+    }
+
+    @Benchmark
+    public void test5(final Blackhole bh) {
+
+        bh.consume(userController.user5());
+    }
+}
+```
+
+总结：
+
+1、本案例中性能问题产生的原因是两层for循环导致的循环次数过多，处理时间在循环次数变大的情况下变得非常长，考虑将一层循环拆出去，创建HashMap用来查询提升性能。
+
+2、使用LocalDateTime替代SimpleDateFormat进行日期的格式化。
+
+3、使用stream流改造代码，这一步可能会导致性能下降，主要是为了第四次优化准备。
+
+4、使用并行流利用多核CPU的优势并行执行提升性能。
+
+
+
+# 高级篇
+
+## 1、GraalVM
+
+### 1.1 什么是GraalVM
+
+GraalVM是Oracle官方推出的一款高性能JDK，使用它享受比OpenJDK或者OracleJDK更好的性能。 GraalVM的官方网址：https://www.graalvm.org/ 官方标语：Build faster, smaller, leaner applications。 更低的CPU、内存使用率
+
+![img](./assets/1734171142337-94.png)
+
+![img](./assets/1734171142332-1.png)
+
+官方标语：Build faster, smaller, leaner applications。
+
+- 更低的CPU、内存使用率
+- 更快的启动速度，无需预热即可获得最好的性能
+- 更好的安全性、更小的可执行文件
+- 支持多种框架Spring Boot、Micronaut、Helidon 和 Quarkus。
+- 多家云平台支持。
+- 通过Truffle框架运行JS、Python、Ruby等其他语言。
+
+GraalVM分为社区版（Community Edition）和企业版（Enterprise Edition）。企业版相比较社区版，在性能上有更多的优化。
+
+| 特性                                  | 描述                                             | 社区版 | 企业版 |
+| ------------------------------------- | ------------------------------------------------ | ------ | ------ |
+| 收费                                  | 是否收费                                         | 免费   | 收费   |
+| G1**垃圾回收器**                      | 使用**G1垃圾回收器优化垃圾回收性能**             | ×      | √      |
+| Profile Guided**Optimization（PGO）** | 运行过程中收集动态数据，进一步优化本地镜像的性能 | ×      | √      |
+| 高级优化特性                          | 更多优化技术，降低内存和垃圾回收的开销           | ×      | √      |
+| 高级优化参数                          | 更多的高级优化参数可以设置                       | ×      | √      |
+
+需求： 搭建Linux下的GraalVM社区版本环境。 步骤： 1、使用arch查看Linux架构
+
+![img](./assets/1734171142332-2.png)
+
+2、根据架构下载社区版的GraalVM：https://www.graalvm.org/downloads/
+
+![img](./assets/1734171142332-3.png)
+
+3、安装GraalVM，安装方式与安装JDK相同 解压文件：
+
+![img](./assets/1734171142333-4.png)
+
+设置环境变量:
+
+![img](./assets/1734171142333-5.png)
+
+4、使用java -version和HelloWorld测试GraalVM。
+
+![img](./assets/1734171142333-6.png)
+
+### 1.2 GraalVM的两种模式
+
+- JIT（ Just-In-Time ）模式 ，即时编译模式
+- AOT（Ahead-Of-Time）模式 ，提前编译模式
+
+JIT模式的处理方式与Oracle JDK类似，满足两个特点：
+
+Write Once,Run Anywhere -> 一次编写，到处运行。
+
+预热之后，通过内置的Graal即时编译器优化热点代码，生成比Hotspot JIT更高性能的机器码。
+
+![img](./assets/1734171142333-7.png)
+
+需求：
+
+分别在JDK8 、 JDK21 、 GraalVM 21 Graal即时编译器、GraalVM 21 不开启Graal即时编译器运行Jmh性能测试用例，对比其性能。
+
+步骤：
+
+1、在代码文件夹中找到GraalVM的案例代码，将java-simple-stream-benchmark文件夹下的代码使用maven打包成jar包。
+
+![img](./assets/1734171142333-8.png)
+
+![img](./assets/1734171142333-9.png)
+
+2、将jar包上传到服务器，使用不同的JDK进行测试，对比结果。
+
+注意：
+
+-XX:-UseJVMCICompiler参数可以关闭GraalVM中的Graal编译器。
+
+![img](./assets/1734171142333-10.png)
+
+GraalVM开启Graal编译器下的性能还是不错的：
+
+![img](./assets/1734171142333-11.png)
+
+AOT（Ahead-Of-Time）模式 ，提前编译模式
+
+AOT 编译器通过源代码，为特定平台创建可执行文件。比如，在Windows下编译完成之后，会生成exe文件。通过这种方式，达到启动之后获得最高性能的目的。但是不具备跨平台特性，不同平台使用需要单独编译。
+
+这种模式生成的文件称之为Native Image本地镜像。
+
+![img](./assets/1734171142333-12.png)
+
+需求： 使用GraalVM AOT模式制作本地镜像并运行。 步骤： 1、安装Linux环境本地镜像制作需要的依赖库： https://www.graalvm.org/latest/reference-manual/native-image/#prerequisites 2、使用 native-image 类名 制作本地镜像。
+
+![img](./assets/1734171142333-13.png)
+
+3、运行本地镜像可执行文件。
+
+![img](./assets/1734171142333-14.png)
+
+社区版的GraalVM使用本地镜像模式性能不如Hotspot JVM的JIT模式，但是企业版的性能相对会高很多。
+
+![img](./assets/1734171142333-15.png)
+
+### 1.3 应用场景
+
+GraalVM的AOT模式虽然在启动速度、内存和CPU开销上非常有优势，但是使用这种技术会带来几个问题：
+
+1、跨平台问题，在不同平台下运行需要编译多次。编译平台的依赖库等环境要与运行平台保持一致。
+
+2、使用框架之后，编译本地镜像的时间比较长，同时也需要消耗大量的CPU和内存。
+
+3、AOT 编译器在编译时，需要知道运行时所有可访问的所有类。但是Java中有一些技术可以在运行时创建类，例如反射、动态代理等。这些技术在很多框架比如Spring中大量使用，所以框架需要对AOT编译器进行适配解决类似的问题。
+
+解决方案：
+
+1、使用公有云的Docker等容器化平台进行在线编译，确保编译环境和运行环境是一致的，同时解决了编译资源问题。
+
+2、使用SpringBoot3等整合了GraalVM AOT模式的框架版本。
+
+#### SpringBoot搭建GraalVM应用
+
+需求： SpringBoot3对GraalVM进行了完整的适配，所以编写GraalVM服务推荐使用SpringBoot3。 步骤： 1、使用 https://start.spring.io/ spring提供的在线生成器构建项目。
+
+![img](./assets/1734171142334-16.png)
+
+2、编写业务代码，修改原代码将`PostConstructor`注解去掉：
+
+```Java
+@Service
+public class UserServiceImpl implements UserService, InitializingBean {
+
+    private List<User> users = new ArrayList<>();
+
+    @Autowired
+    private UserDao userDao;
+
+    @Override
+    public List<UserDetails> getUserDetails() {
+        return userDao.findUsers();
+    }
+
+    @Override
+    public List<User> getUsers() {
+        return users;
+    }
+
+    @Override
+    public void afterPropertiesSet() throws Exception {
+        //初始化时生成数据
+        for (int i = 1; i <= 10; i++) {
+            users.add(new User((long) i, RandomStringUtils.randomAlphabetic(10)));
+        }
+    }
+}
+```
+
+3、执行 mvn -Pnative clean native:compile 命令生成本地镜像。
+
+![img](./assets/1734171142334-17.png)
+
+![img](./assets/1734171142334-18.png)
+
+4、运行本地镜像。
+
+![img](./assets/1734171142334-19.png)
+
+什么场景下需要使用GraalVM呢？
+
+1、对性能要求比较高的场景，可以选择使用收费的企业版提升性能。
+
+2、公有云的部分服务是按照CPU和内存使用量进行计费的，使用GraalVM可以有效地降低费用。
+
+![img](./assets/1734171142334-20.png)
+
+#### 函数计算
+
+传统的系统架构中，服务器等基础设施的运维、安全、高可用等工作都需要企业自行完成，存在两个主要问题：
+
+1、开销大，包括了人力的开销、机房建设的开销。
+
+2、资源浪费，面对一些突发的流量冲击，比如秒杀等活动，必须提前规划好容量准备好大量的服务器，这些服务器在其他时候会处于闲置的状态，造成大量的浪费。
+
+![img](./assets/1734171142334-21.png)
+
+随着虚拟化技术、云原生技术的愈发成熟，云服务商提供了一套称为Serverless无服务器化的架构。企业无需进行服务器的任何配置和部署，完全由云服务商提供。比较典型的有亚马逊AWS、阿里云等。
+
+![img](./assets/1734171142334-22.png)
+
+Serverless架构中第一种常见的服务是函数计算（Function as a Service），将一个应用拆分成多个函数，每个函数会以事件驱动的方式触发。典型代表有AWS的Lambda、阿里云的FC。
+
+![img](./assets/1734171142334-23.png)
+
+函数计算主要应用场景有如下几种：
+
+小程序、API服务中的接口，此类接口的调用频率不高，使用常规的服务器架构容易产生资源浪费，使用Serverless就可以实现按需付费降低成本，同时支持自动伸缩能应对流量的突发情况。
+
+大规模任务的处理，比如音视频文件转码、审核等，可以利用事件机制当文件上传之后，自动触发对应的任务。
+
+函数计算的计费标准中包含CPU和内存使用量，所以使用GraalVM AOT模式编译出来的本地镜像可以节省更多的成本。
+
+![img](./assets/1734171142334-24.png)
+
+步骤：
+
+1、在项目中编写Dockerfile文件。
+
+```Java
+# Using Oracle GraalVM for JDK 17
+FROM container-registry.oracle.com/graalvm/native-image:17-ol8 AS builder
+
+# Set the working directory to /home/app
+WORKDIR /build
+
+# Copy the source code into the image for building
+COPY . /build
+RUN chmod 777 ./mvnw
+
+# Build
+RUN ./mvnw --no-transfer-progress native:compile -Pnative
+
+# The deployment Image
+FROM container-registry.oracle.com/os/oraclelinux:8-slim
+
+EXPOSE 8080
+
+# Copy the native executable into the containers
+COPY --from=builder /build/target/spring-boot-3-native-demo app
+ENTRYPOINT ["/app"]
+```
+
+2、使用服务器制作镜像，这一步会消耗大量的CPU和内存资源，同时GraalVM相关的镜像服务器在国外，建议使用阿里云的镜像服务器制作Docker镜像。
+
+![img](./assets/1734171142334-25.png)
+
+3、使用函数计算将Docker镜像转换成函数服务。
+
+![img](./assets/1734171142334-26.png)
+
+![img](./assets/1734171142334-27.png)
+
+配置触发器：
+
+![img](./assets/1734171142334-28.png)
+
+4、绑定域名并进行测试。
+
+![img](./assets/1734171142334-29.png)
+
+需要准备一个自己的域名：
+
+![img](./assets/1734171142334-30.png)
+
+配置接口路径：
+
+![img](./assets/1734171142334-31.png)
+
+会出现一个错误：
+
+![img](./assets/1734171142334-32.png)
+
+把域名导向阿里云的域名：
+
+![img](./assets/1734171142334-33.png)
+
+测试成功：
+
+![img](./assets/1734171142334-34.png)
+
+#### Serverless应用
+
+函数计算的服务资源比较受限，比如AWS的Lambda服务一般无法支持超过15分钟的函数执行，所以云服务商提供了另外一套方案：基于容器的Serverless应用，无需手动配置K8s中的Pod、Service等内容，只需选择镜像就可自动生成应用服务。
+
+同样，Serverless应用的计费标准中包含CPU和内存使用量，所以使用GraalVM AOT模式编译出来的本地镜像可以节省更多的成本。
+
+| 服务分类           | 交付模式 | 弹性效率 | 计费模式                  |
+| ------------------ | -------- | -------- | ------------------------- |
+| 函数计算           | 函数     | 毫秒级   | 调用次数**CPU内存使用量** |
+| Serverless**应用** | 镜像容器 | 秒级     | CPU**内存使用量**         |
+
+步骤：
+
+1、在项目中编写Dockerfile文件。
+
+2、使用服务器制作镜像，这一步会消耗大量的CPU和内存资源，同时GraalVM相关的镜像服务器在国外，建议使用阿里云的镜像服务器制作Docker镜像。
+
+前两步同实战案例2
+
+3、配置Serverless应用，选择容器镜像、CPU和内存。
+
+![img](./assets/1734171142334-35.png)
+
+4、绑定外网负载均衡并使用Postman进行测试。
+
+![img](./assets/1734171142334-36.png)
+
+先别急着点确定，需要先创建弹性公网IP:
+
+![img](./assets/1734171142334-37.png)
+
+全选默认，然后创建：
+
+![img](./assets/1734171142335-38.png)
+
+创建SLB负载均衡：
+
+![img](./assets/1734171142335-39.png)
+
+这次就可以成功创建了：
+
+![img](./assets/1734171142335-40.png)
+
+绑定刚才创建的SLB负载均衡：
+
+![img](./assets/1734171142335-41.png)
+
+![img](./assets/1734171142335-42.png)
+
+访问公网IP就能处理请求了：
+
+![img](./assets/1734171142335-43.png)
+
+### 1.4 参数优化和故障诊断
+
+由于GraalVM是一款独立的JDK，所以大部分HotSpot中的虚拟机参数都不适用。常用的参数参考：官方手册。
+
+- 社区版只能使用串行垃圾回收器（Serial GC），使用串行垃圾回收器的默认最大 Java 堆大小会设置为物理内存大小的 80%，调整方式为使用  -Xmx最大堆大小。如果希望在编译期就指定该大小，可以在编译时添加参数-R:MaxHeapSize=最大堆大小。
+- G1垃圾回收器只能在企业版中使用，开启方式为添加--gc=G1参数，有效降低垃圾回收的延迟。
+- 另外提供一个Epsilon GC，开启方式：--gc=epsilon ，它不会产生任何的垃圾回收行为所以没有额外的内存、CPU开销。如果在公有云上运行的程序生命周期短暂不产生大量的对象，可以使用该垃圾回收器，以节省最大的资源。
+
+-XX:+PrintGC -XX:+VerboseGC 参数打印垃圾回收详细信息。
+
+添加虚拟机参数：
+
+![img](./assets/1734171142335-44.png)
+
+打印出了垃圾回收的信息：
+
+![img](./assets/1734171142335-45.png)
+
+#### 实战案例4：内存快照文件的获取
+
+**需求：**
+
+获得运行中的内存快照文件，使用MAT进行分析。
+
+**步骤：**
+
+1、编译程序时，添加 --enable-monitoring=heapdump，参数添加到pom文件的对应插件中。
+
+```XML
+<plugin>
+   <groupId>org.graalvm.buildtools</groupId>
+   <artifactId>native-maven-plugin</artifactId>
+   <configuration>
+      <buildArgs>
+         <arg>--enable-monitoring=heapdump,jfr</arg>
+      </buildArgs>
+   </configuration>
+</plugin>
+```
+
+2、运行中使用 kill -SIGUSR1 进程ID 命令，创建内存快照文件。
+
+![img](./assets/1734171142335-46.png)
+
+3、使用MAT分析内存快照文件。
+
+![img](./assets/1734171142335-47.png)
+
+#### 实战案例5：运行时数据的获取
+
+JDK Flight Recorder (JFR) 是一个内置于 JVM 中的工具，可以收集正在运行中的 Java 应用程序的诊断和分析数据，比如线程、异常等内容。GraalVM本地镜像也支持使用JFR生成运行时数据，导出的数据可以使用VisualVM分析。
+
+步骤：
+
+1、编译程序时，添加 --enable-monitoring=jfr，参数添加到pom文件的对应插件中。
+
+```XML
+<plugin>
+   <groupId>org.graalvm.buildtools</groupId>
+   <artifactId>native-maven-plugin</artifactId>
+   <configuration>
+      <buildArgs>
+         <arg>--enable-monitoring=heapdump,jfr</arg>
+      </buildArgs>
+   </configuration>
+</plugin>
+```
+
+2、运行程序，添加 -XX:StartFlightRecording=filename=recording.jfr,duration=10s参数。
+
+![img](./assets/1734171142335-48.png)
+
+3、使用VisualVM分析JFR记录文件。
+
+![img](./assets/1734171142335-49.png)
+
+![img](./assets/1734171142335-50.png)
+
+## 2、新一代的GC
+
+### 2.1 垃圾回收器的技术演进
+
+![img](./assets/1734171142335-51.png)
+
+不同的垃圾回收器设计的目标是不同的，如下图所示：
+
+![img](./assets/1734171142335-52.png)
+
+### 2.2 Shenandoah GC
+
+Shenandoah 是由Red Hat开发的一款低延迟的垃圾收集器，Shenandoah 并发执行大部分 GC 工作，包括并发的整理，堆大小对STW的时间基本没有影响。
+
+![img](./assets/1734171142335-53.png)
+
+1、下载。Shenandoah只包含在OpenJDK中，默认不包含在内需要单独构建，可以直接下载构建好的。 下载地址：https://builds.shipilev.net/openjdk-jdk-shenandoah/ 选择方式如下： {aarch64, arm32-hflt, mipsel, mips64el, ppc64le, s390x, x86_32, x86_64}：架构，使用arch命令选择对应的的架构。 {server,zero}：虚拟机类型，选择server，包含所有GC的功能。 {release, fastdebug, Slowdebug, optimization}：不同的优化级别，选择release，性能最高。 {gcc*-glibc*, msvc*}：编译器的版本，选择较高的版本性能好一些，如果兼容性有问题（无法启动），选择较低的版本。
+
+![img](./assets/1734171142335-54.png)
+
+2、配置。将OpenJDK配置到环境变量中，使用java –version进行测试。打印出如下内容代表成功。
+
+![img](./assets/1734171142335-55.png)
+
+3、添加参数，运行Java程序。
+
+-XX:+UseShenandoahGC  开启Shenandoah GC
+
+-Xlog:gc  打印GC日志
+
+![img](./assets/1734171142335-56.png)
+
+```Java
+/*
+ * Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
+ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+ *
+ * This code is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 only, as
+ * published by the Free Software Foundation.  Oracle designates this
+ * particular file as subject to the "Classpath" exception as provided
+ * by Oracle in the LICENSE file that accompanied this code.
+ *
+ * This code is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ * version 2 for more details (a copy is included in the LICENSE file that
+ * accompanied this code).
+ *
+ * You should have received a copy of the GNU General Public License version
+ * 2 along with this work; if not, write to the Free Software Foundation,
+ * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+ *
+ * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+ * or visit www.oracle.com if you need additional information or have any
+ * questions.
+ */
+
+package org.sample;
+
+import com.sun.management.OperatingSystemMXBean;
+import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.infra.Blackhole;
+import org.openjdk.jmh.runner.Runner;
+import org.openjdk.jmh.runner.RunnerException;
+import org.openjdk.jmh.runner.options.Options;
+import org.openjdk.jmh.runner.options.OptionsBuilder;
+
+import java.lang.management.ManagementFactory;
+import java.lang.management.MemoryMXBean;
+import java.lang.management.MemoryUsage;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+
+//执行5轮预热，每次持续2秒
+@Warmup(iterations = 5, time = 2, timeUnit = TimeUnit.SECONDS)
+//输出毫秒单位
+@OutputTimeUnit(TimeUnit.MILLISECONDS)
+//统计方法执行的平均耗时
+@BenchmarkMode(Mode.AverageTime)
+//java -jar benchmarks.jar -rf json
+@State(Scope.Benchmark)
+public class MyBenchmark {
+
+    //每次测试对象大小 4KB和4MB
+    @Param({"4","4096"})
+    int perSize;
+
+    private void test(Blackhole blackhole){
+
+        //每次循环创建堆内存60%对象 JMX获取到Java运行中的实时数据
+        MemoryMXBean memoryMXBean = ManagementFactory.getMemoryMXBean();
+        //获取堆内存大小
+        MemoryUsage heapMemoryUsage = memoryMXBean.getHeapMemoryUsage();
+        //获取到剩余的堆内存大小
+        long heapSize = (long) ((heapMemoryUsage.getMax() - heapMemoryUsage.getUsed()) * 0.6);
+        //计算循环次数
+        long size = heapSize / (1024 * perSize);
+
+        for (int i = 0; i < 4; i++) {
+            List<byte[]> objects = new ArrayList<>((int)size);
+            for (int j = 0; j < size; j++) {
+                objects.add(new byte[1024 * perSize]);
+            }
+            blackhole.consume(objects);
+        }
+    }
+
+    @Benchmark
+    @Fork(value = 1,jvmArgsAppend = {"-Xms4g","-Xmx4g","-XX:+UseSerialGC"})
+    public void serialGC(Blackhole blackhole){
+        test(blackhole);
+    }
+    
+    @Benchmark
+    @Fork(value = 1,jvmArgsAppend = {"-Xms4g","-Xmx4g","-XX:+UseParallelGC"})
+    public void parallelGC(Blackhole blackhole){
+        test(blackhole);
+    }
+    
+    @Benchmark
+    @Fork(value = 1,jvmArgsAppend = {"-Xms4g","-Xmx4g"})
+    public void g1(Blackhole blackhole){
+        test(blackhole);
+    }
+
+    @Benchmark
+    @Fork(value = 1,jvmArgsAppend = {"-Xms4g","-Xmx4g","-XX:+UseShenandoahGC"})
+    public void shenandoahGC(Blackhole blackhole){
+        test(blackhole);
+    }
+
+
+    public static void main(String[] args) throws RunnerException {
+
+        Options opt = new OptionsBuilder()
+                .include(MyBenchmark.class.getSimpleName())
+                .forks(1)
+                .build();
+
+        new Runner(opt).run();
+    }
+}
+```
+
+测试结果：
+
+![img](./assets/1734171142335-57.png)
+
+Shenandoah GC对小对象的GC停顿很短，但是大对象效果不佳。
+
+### 2.3 ZGC
+
+ZGC 是一种可扩展的低延迟垃圾回收器。ZGC 在垃圾回收过程中，STW的时间不会超过一毫秒，适合需要低延迟的应用。支持几百兆到16TB 的堆大小，堆大小对STW的时间基本没有影响。
+
+ZGC降低了停顿时间，能降低接口的最大耗时，提升用户体验。但是吞吐量不佳，所以如果Java服务比较关注QPS（每秒的查询次数）那么G1是比较不错的选择。
+
+![img](./assets/1734171142335-58.png)
+
+#### **ZGC版本更迭：**
+
+![img](./assets/1734171142335-59.png)
+
+#### ZGC的使用
+
+OracleJDK和OpenJDK中都支持ZGC，阿里的DragonWell龙井JDK也支持ZGC但属于其自行对OpenJDK 11的ZGC进行优化的版本。
+
+建议使用JDK17之后的版本，延迟较低同时无需手动配置并行线程数。
+
+分代 ZGC添加如下参数启用   -XX:+UseZGC -XX:+ZGenerational
+
+非分代 ZGC通过命令行选项启用 -XX:+UseZGC
+
+![img](./assets/1734171142336-60.png)
+
+#### ZGC的环境搭建
+
+ZGC在设计上做到了自适应，根据运行情况自动调整参数，让用户手动配置的参数最少化。
+
+- 自动设置年轻代大小，无需设置-Xmn参数。
+
+自动晋升阈值（复制中存活多少次才搬运到老年代），无需设置-XX:TenuringThreshold。
+
+JDK17之后支持自动的并行线程数，无需设置-XX:ConcGCThreads。
+
+- 需要设置的参数：
+  -  -Xmx 值  最大堆内存大小
+
+  -  这是ZGC最重要的一个参数，必须设置。ZGC在运行过程中会使用一部分内存用来处理垃圾回收，所以尽量保证堆中有足够的空间。设置多少值取决于对象分配的速度，根据测试情况来决定。
+
+- 可以设置的参数：
+  -  -XX:SoftMaxHeapSize=值
+
+  -  ZGC会尽量保证堆内存小于该值，这样在内存靠近这个值时会尽早地进行垃圾回收，但是依然有可能会超过该值。
+
+  -  例如，-Xmx5g -XX:SoftMaxHeapSize=4g 这个参数设置，ZGC会尽量保证堆内存小于4GB，最多不会超过5GB。
+
+```Java
+@Benchmark
+@Fork(value = 1,jvmArgsAppend = {"-Xms4g","-Xmx4g","-XX:+UseZGC","-XX:+UseLargePages"})
+public void zGC(Blackhole blackhole){
+    test(blackhole);
+}
+
+@Benchmark
+@Fork(value = 1,jvmArgsAppend = {"-Xms4g","-Xmx4g","-XX:+UseZGC","-XX:+ZGenerational","-XX:+UseLargePages"})
+public void zGCGenerational(Blackhole blackhole){
+    test(blackhole);
+}
+```
+
+![img](./assets/1734171142336-61.png)
+
+ZGC整体表现还是非常不错的，分代也让ZGC的停顿时间有更好的表现。
+
+#### ZGC调优
+
+ZGC 中可以使用Linux的Huge Page大页技术优化性能，提升吞吐量、降低延迟。
+
+注意：安装过程需要 root 权限，所以ZGC默认没有开启此功能。
+
+操作步骤：
+
+1、计算所需页数，Linux x86架构中大页大小为2MB，根据所需堆内存的大小估算大页数量。比如堆空间需要16G，预留2G（JVM需要额外的一些非堆空间），那么页数就是18G / 2MB = 9216。
+
+2、配置系统的大页池以具有所需的页数（需要root权限）：
+
+$ echo 9216 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+
+3、添加参数-XX:+UseLargePages 启动程序进行测试
+
+### 2.4 实战案例
+
+**需求：**
+
+Java服务中存在大量软引用的缓存导致内存不足，测试下g1、Shenandoah、ZGC这三种垃圾回收器在这种场景下的回收情况。
+
+**步骤：**
+
+测试代码:
+
+```Java
+package com.itheima.jvmoptimize.fullgcdemo;
+
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import lombok.SneakyThrows;
+import org.apache.commons.lang3.RandomStringUtils;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+
+@RestController
+@RequestMapping("/fullgc")
+public class Demo2Controller {
+
+    private Cache cache = Caffeine.newBuilder().weakKeys().softValues().build();
+    private List<Object> objs = new ArrayList<>();
+
+    private static final int _1MB = 1024 * 1024;
+
+    //FULLGC测试
+    //-Xms8g -Xmx8g -Xss256k -XX:MaxMetaspaceSize=512m  -XX:+DisableExplicitGC -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=D:/test.hprof  -verbose:gc -XX:+PrintGCDetails -XX:+PrintGCTimeStamps
+    //ps + po 50并发 260ms  100并发 474  200并发 930
+    //cms -XX:+UseParNewGC -XX:+UseConcMarkSweepGC 50并发 157ms  200并发 833
+    //g1 JDK11 并发200 248
+    @GetMapping("/1")
+    public void test() throws InterruptedException {
+        cache.put(RandomStringUtils.randomAlphabetic(8),new byte[10 * _1MB]);
+    }
+
+}
+```
+
+1、启动程序，添加不同的虚拟机参数进行测试。
+
+![img](./assets/1734171142336-62.png)
+
+2、使用Apache Benchmark测试工具对本机进行压测。
+
+![img](./assets/1734171142336-63.png)
+
+3、生成GC日志，使用GcEasy进行分析。
+
+4、对比压测之后的结果。
+
+两种垃圾回收器在并行回收时都会使用垃圾回收线程占用CPU资源
+
+在内存足够的情况下，ZGC垃圾回收表现的效果会更好，停顿时间更短。
+
+在内存不是特别充足的情况下， Shenandoah GC表现更好，并行垃圾回收的时间较短，用户请求的执行效率比较高。
+
+## 3、揭秘Java工具
+
+在Java的世界中，除了Java编写的业务系统之外，还有一类程序也需要Java程序员参与编写，这类程序就是Java工具。
+
+常见的Java工具有以下几类：
+
+1、诊断类工具，如Arthas、VisualVM等。
+
+2、开发类工具，如Idea、Eclipse。
+
+3、APM应用性能监测工具，如Skywalking、Zipkin等。
+
+4、热部署工具，如Jrebel等。
+
+### 3.1 Java工具的核心：Java Agent技术
+
+Java Agent技术是JDK提供的用来编写Java工具的技术，使用这种技术生成一种特殊的jar包，这种jar包可以让Java程序运行其中的代码。
+
+![img](./assets/1734171142336-64.png)
+
+Java Agent技术实现了让Java程序执行独立的Java Agent程序中的代码，执行方式有两种：
+
+- 静态加载模式
+
+静态加载模式可以在程序启动的一开始就执行我们需要执行的代码，适合用APM等性能监测系统从一开始就监控程序的执行性能。静态加载模式需要在Java Agent的项目中编写一个premain的方法，并打包成jar包。
+
+![img](./assets/1734171142336-65.png)
+
+接下来使用以下命令启动Java程序，此时Java虚拟机将会加载agent中的代码并执行。
+
+![img](./assets/1734171142336-66.png)
+
+premain方法会在主线程中执行：
+
+![img](./assets/1734171142336-67.png)
+
+- 动态加载模式
+
+动态加载模式可以随时让java agent代码执行，适用于Arthas等诊断系统。动态加载模式需要在Java Agent的项目中编写一个agentmain的方法，并打包成jar包。
+
+![img](./assets/1734171142336-68.png)
+
+接下来使用以下代码就可以让java agent代码在指定的java进程中执行了。
+
+![img](./assets/1734171142336-69.png)
+
+agentmain方法会在独立线程中执行：
+
+![img](./assets/1734171142336-70.png)
+
+#### 搭建java agent静态加载模式的环境
+
+步骤：
+
+1、创建maven项目，添加maven-assembly-plugin插件，此插件可以打包出java agent的jar包。
+
+```XML
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-assembly-plugin</artifactId>
+    <configuration>
+        <descriptorRefs>
+            <descriptorRef>jar-with-dependencies</descriptorRef>
+        </descriptorRefs>
+        <archive>
+            <manifestFile>src/main/resources/MANIFEST.MF</manifestFile>
+        </archive>
+    </configuration>
+</plugin>
+```
+
+2、编写类和premain方法，premain方法中打印一行信息。
+
+```Java
+public class AgentDemo {
+
+    /**
+     * 参数添加模式 启动java主程序时添加 -javaangent:agent路径
+     * @param agentArgs
+     * @param inst
+     */
+    public static void premain(String agentArgs, Instrumentation inst) {
+        System.out.println("java agent执行了...");
+    }
+}
+```
+
+3、编写MANIFEST.MF文件，此文件主要用于描述java agent的配置属性，比如使用哪一个类的premain方法。
+
+```Java
+Manifest-Version: 1.0
+Premain-Class: com.itheima.jvm.javaagent.AgentDemo
+Agent-Class: com.itheima.jvm.javaagent.AgentDemo
+Can-Redefine-Classes: true
+Can-Retransform-Classes: true
+Can-Set-Native-Method-Prefix: true
+```
+
+4、使用maven-assembly-plugin进行打包。
+
+![img](./assets/1734171142336-71.png)
+
+5、创建spring boot应用，并静态加载上一步打包完的java agent。
+
+![img](./assets/1734171142336-72.png)
+
+#### 搭建java agent动态加载模式的环境
+
+步骤：
+
+1、创建maven项目，添加maven-assembly-plugin插件，此插件可以打包出java agent的jar包。
+
+2、编写类和agentmain方法， agentmain方法中打印一行信息。
+
+```Java
+package com.itheima.jvm.javaagent.demo01;
+
+import java.lang.instrument.Instrumentation;
+
+public class AgentDemo {
+
+    /**
+     * 参数添加模式 启动java主程序时添加 -javaangent:agent路径
+     * @param agentArgs
+     * @param inst
+     */
+    public static void premain(String agentArgs, Instrumentation inst) {
+        System.out.println("java agent执行了...");
+    }
+
+    /**
+     * attach 挂载模式 java主程序运行之后，随时可以将agent挂载上去
+     */
+
+    public static void agentmain(String agentArgs, Instrumentation inst) {
+        //打印线程名称
+        System.out.println(Thread.currentThread().getName());
+        System.out.println("attach模式执行了...");
+    }
+}
+```
+
+3、编写MANIFEST.MF文件，此文件主要用于描述java agent的配置属性，比如使用哪一个类的agentmain方法。
+
+4、使用maven-assembly-plugin进行打包。
+
+5、编写main方法，动态连接到运行中的java程序。
+
+```Java
+package com.itheima.jvm.javaagent.demo01;
+
+import com.sun.tools.attach.AgentInitializationException;
+import com.sun.tools.attach.AgentLoadException;
+import com.sun.tools.attach.AttachNotSupportedException;
+import com.sun.tools.attach.VirtualMachine;
+
+import java.io.IOException;
+
+public class AttachMain {
+    public static void main(String[] args) throws IOException, AttachNotSupportedException, AgentLoadException, AgentInitializationException {
+        VirtualMachine vm = VirtualMachine.attach("24200");
+        vm.loadAgent("D:\\jvm-java-agent\\target\\itheima-jvm-java-agent-jar-with-dependencies.jar");
+    }
+}
+```
+
+### 3.2 实战案例1：简化版的Arthas
+
+需求：
+
+编写一个简化版的Arthas程序，具备以下几个功能：
+
+1、查看内存使用情况
+
+2、生成堆内存快照
+
+3、打印栈信息
+
+4、打印类加载器
+
+5、打印类的源码
+
+6、打印方法执行的参数和耗时
+
+需求：
+
+该程序是一个独立的Jar包，可以应用于任何Java编写的系统中。
+
+具备以下特点：代码无侵入性、操作简单、性能高。
+
+![img](./assets/1734171142336-73.png)
+
+#### 1、查看内存使用情况
+
+ JDK从1.5开始提供了Java Management Extensions (JMX) 技术，通过Mbean对象的写入和获取，实现：
+
+运行时配置的获取和更改
+
+应用程序运行信息的获取（线程栈、内存、类信息等）
+
+![img](./assets/1734171142336-74.png)
+
+ 获取JVM默认提供的Mbean可以通过如下的方式，例如获取内存信息：
+
+![img](./assets/1734171142336-75.png)
+
+ManagementFactory提供了一系列的方法获取各种各样的信息：
+
+![img](./assets/1734171142336-76.png)
+
+```Java
+package com.itheima.jvm.javaagent.demo02;
+
+import java.lang.instrument.Instrumentation;
+import java.lang.management.*;
+import java.util.List;
+
+/**
+ * 1、查询所有进程
+ * 2、显示内存相关的信息
+ */
+public class AgentDemo {
+
+    /**
+     * 参数添加模式 启动java主程序时添加 -javaangent:agent路径
+     * @param agentArgs
+     * @param inst
+     */
+    public static void premain(String agentArgs, Instrumentation inst) {
+        System.out.println("java agent执行了...");
+    }
+
+    /**
+     * attach 挂载模式 java主程序运行之后，随时可以将agent挂载上去
+     */
+
+    //-XX:+UseSerialGC -Xmx1g -Xms512m
+    public static void agentmain(String agentArgs, Instrumentation inst) {
+        //打印内存的使用情况
+        memory();
+    }
+
+    //获取内存信息
+    private static void memory(){
+        List<MemoryPoolMXBean> memoryPoolMXBeans = ManagementFactory.getMemoryPoolMXBeans();
+
+        System.out.println("堆内存：");
+        //获取堆内存
+        getMemoryInfo(memoryPoolMXBeans, MemoryType.HEAP);
+
+        //获取非堆内存
+        System.out.println("非堆内存：");
+        getMemoryInfo(memoryPoolMXBeans, MemoryType.NON_HEAP);
+
+        //nio使用的直接内存
+        try{
+            @SuppressWarnings("rawtypes")
+            Class bufferPoolMXBeanClass = Class.forName("java.lang.management.BufferPoolMXBean");
+            @SuppressWarnings("unchecked")
+            List<BufferPoolMXBean> bufferPoolMXBeans = ManagementFactory.getPlatformMXBeans(bufferPoolMXBeanClass);
+            for (BufferPoolMXBean mbean : bufferPoolMXBeans) {
+                StringBuilder sb = new StringBuilder();
+                sb
+                        .append("name:")
+                        .append(mbean.getName())
+
+                        .append(" used:")
+                        .append(mbean.getMemoryUsed()/ 1024 / 1024)
+                        .append("m")
+
+                        .append(" max:")
+                        .append(mbean.getTotalCapacity() / 1024 / 1024)
+                        .append("m");
+
+                System.out.println(sb);
+            }
+        }catch (Exception e){
+            System.out.println(e);
+        }
+
+    }
+
+    private static void getMemoryInfo(List<MemoryPoolMXBean> memoryPoolMXBeans, MemoryType heap) {
+        memoryPoolMXBeans.stream().filter(x -> x.getType().equals(heap))
+                .forEach(x -> {
+                    StringBuilder sb = new StringBuilder();
+                    sb
+                            .append("name:")
+                            .append(x.getName())
+
+                            .append(" used:")
+                            .append(x.getUsage().getUsed() / 1024 / 1024)
+                            .append("m")
+
+                            .append(" max:")
+                            .append(x.getUsage().getMax() / 1024 / 1024)
+                            .append("m")
+
+                            .append(" committed:")
+                            .append(x.getUsage().getCommitted() / 1024 / 1024)
+                            .append("m");
+
+                    System.out.println(sb);
+                });
+    }
+
+    public static void main(String[] args) {
+        memory();
+    }
+}
+```
+
+#### 2、生成堆内存快照
+
+更多的信息可以通过ManagementFactory.getPlatformMXBeans获取，比如：
+
+![img](./assets/1734171142336-77.png)
+
+通过这种方式，获取到了Java虚拟机中分配的直接内存和内存映射缓冲区的大小。
+
+![img](./assets/1734171142336-78.png)
+
+获取到虚拟机诊断用的MXBean，通过这个Bean对象可以生成内存快照。
+
+```Java
+public static void heapDump(){
+    SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyy-MM-dd-HH-mm");
+    String filename = simpleDateFormat.format(new Date()) + ".hprof";
+    System.out.println("生成内存dump文件，文件名为:" + filename);
+
+    HotSpotDiagnosticMXBean hotSpotDiagnosticMXBean =
+            ManagementFactory.getPlatformMXBean(HotSpotDiagnosticMXBean.class);
+
+    try {
+        hotSpotDiagnosticMXBean.dumpHeap(filename, true);
+    } catch (IOException e) {
+        e.printStackTrace();
+    }
+}
+```
+
+#### 3、打印栈信息
+
+```Java
+package com.itheima.jvm.javaagent.demo03;
+
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
+import java.lang.management.ThreadMXBean;
+
+public class ThreadCommand {
+
+    public static void printStackInfo(){
+        ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
+        ThreadInfo[] infos = threadMXBean.dumpAllThreads(threadMXBean.isObjectMonitorUsageSupported(),
+                threadMXBean.isSynchronizerUsageSupported());
+        for (ThreadInfo info : infos) {
+            StringBuilder stringBuilder = new StringBuilder();
+            stringBuilder.append("name:")
+                    .append(info.getThreadName())
+                    .append(" threadId:")
+                    .append(info.getThreadId())
+                    .append(" state:")
+                    .append(info.getThreadState())
+            ;
+            System.out.println(stringBuilder);
+
+            StackTraceElement[] stackTrace = info.getStackTrace();
+            for (StackTraceElement stackTraceElement : stackTrace) {
+                System.out.println(stackTraceElement.toString());
+            }
+
+            System.out.println();
+        }
+    }
+
+
+
+    public static void main(String[] args) {
+        printStackInfo();
+    }
+}
+```
+
+#### 4、打印类加载器
+
+Java Agent中可以获得Java虚拟机提供的Instumentation对象：
+
+![img](./assets/1734171142336-79.png)
+
+该对象有以下几个作用： 1、redefine，重新设置类的字节码信息。 2、retransform，根据现有类的字节码信息进行增强。 3、获取所有已加载的类信息。 Oracle官方手册： https://docs.oracle.com/javase/17/docs/api/java/lang/instrument/Instrumentation.html
+
+```Java
+package com.itheima.jvm.javaagent.demo04;
+
+import org.jd.core.v1.ClassFileToJavaSourceDecompiler;
+import org.jd.core.v1.api.loader.Loader;
+import org.jd.core.v1.api.loader.LoaderException;
+import org.jd.core.v1.api.printer.Printer;
+
+import java.lang.instrument.*;
+import java.security.ProtectionDomain;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Scanner;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+public class ClassCommand {
+
+    //获取所有类加载器
+    private static Set<ClassLoader> getAllClassLoader(Instrumentation inst){
+        HashSet<ClassLoader> classLoaders = new HashSet<>();
+        Class[] allLoadedClasses = inst.getAllLoadedClasses();
+        for (Class clazz : allLoadedClasses) {
+            ClassLoader classLoader = clazz.getClassLoader();
+            classLoaders.add(classLoader);
+        }
+
+        return classLoaders;
+    }
+
+    public static void printAllClassLoader(Instrumentation inst){
+        Set<ClassLoader> allClassLoader = getAllClassLoader(inst);
+        String result = allClassLoader.stream().map(x -> {
+            if (x ==null) {
+                return "BootStrapClassLoader";
+            } else {
+                return x.toString();
+            }
+        }).distinct().sorted(String::compareTo).collect(Collectors.joining(","));
+        System.out.println(result);
+    }
+
+    
+
+}
+```
+
+#### 5、打印类的源码
+
+打印类的源码需要分为以下几个步骤
+
+1、获得内存中的类的字节码信息。利用Instrumentation提供的转换器来获取字节码信息。
+
+![img](./assets/1734171142336-80.png)
+
+![img](./assets/1734171142336-81.png)
+
+2、通过反编译工具将字节码信息还原成源代码信息。
+
+这里我们会使用jd-core依赖库来完成，github地址：https://github.com/java-decompiler/jd-core
+
+Pom添加依赖:
+
+```XML
+<dependency>
+    <groupId>org.jd</groupId>
+    <artifactId>jd-core</artifactId>
+    <version>1.1.3</version>
+</dependency>
+//获取类信息
+public static void printClass(Instrumentation inst){
+    Scanner scanner = new Scanner(System.in);
+    System.out.println("请输入类名:");
+    String next = scanner.next();
+    Class[] allLoadedClasses = inst.getAllLoadedClasses();
+    System.out.println("要查找的类名是:" + next);
+    //匹配类名
+    for (Class clazz : allLoadedClasses) {
+        if(clazz.getName().equals(next)){
+            System.out.println("找到了类,类加载器为:" + clazz.getClassLoader());
+            ClassFileTransformer transformer = new ClassFileTransformer() {
+                @Override
+                public byte[] transform(Module module, ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) throws IllegalClassFormatException {
+                    ClassFileToJavaSourceDecompiler classFileToJavaSourceDecompiler = new ClassFileToJavaSourceDecompiler();
+
+                    Printer printer = new Printer() {
+                        protected static final String TAB = "  ";
+                        protected static final String NEWLINE = "\n";
+
+                        protected int indentationCount = 0;
+                        protected StringBuilder sb = new StringBuilder();
+
+                        @Override public String toString() { return sb.toString(); }
+
+                        @Override public void start(int maxLineNumber, int majorVersion, int minorVersion) {}
+                        @Override public void end() {
+                            System.out.println(sb.toString());
+                        }
+
+                        @Override public void printText(String text) { sb.append(text); }
+                        @Override public void printNumericConstant(String constant) { sb.append(constant); }
+                        @Override public void printStringConstant(String constant, String ownerInternalName) { sb.append(constant); }
+                        @Override public void printKeyword(String keyword) { sb.append(keyword); }
+                        @Override public void printDeclaration(int type, String internalTypeName, String name, String descriptor) { sb.append(name); }
+                        @Override public void printReference(int type, String internalTypeName, String name, String descriptor, String ownerInternalName) { sb.append(name); }
+
+                        @Override public void indent() { this.indentationCount++; }
+                        @Override public void unindent() { this.indentationCount--; }
+
+                        @Override public void startLine(int lineNumber) { for (int i=0; i<indentationCount; i++) sb.append(TAB); }
+                        @Override public void endLine() { sb.append(NEWLINE); }
+                        @Override public void extraLine(int count) { while (count-- > 0) sb.append(NEWLINE); }
+
+                        @Override public void startMarker(int type) {}
+                        @Override public void endMarker(int type) {}
+                    };
+
+                    try {
+                        classFileToJavaSourceDecompiler.decompile(new Loader() {
+                            @Override
+                            public boolean canLoad(String s) {
+                                return false;
+                            }
+
+                            @Override
+                            public byte[] load(String s) throws LoaderException {
+                                return classfileBuffer;
+                            }
+                        },printer,className);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                    //System.out.println(new String(classfileBuffer));
+                    return ClassFileTransformer.super.transform(module, loader, className, classBeingRedefined, protectionDomain, classfileBuffer);
+                }
+            };
+
+            inst.addTransformer(transformer,true);
+            try {
+                inst.retransformClasses(clazz);
+            } catch (UnmodifiableClassException e) {
+                e.printStackTrace();
+            }finally {
+                inst.removeTransformer(transformer);
+            }
+
+        }
+    }
+}
+```
+
+#### 6、打印方法执行的参数和耗时
+
+##### **Spring AOP是不是也可以实现类似的功能呢？**
+
+Spring AOP 确实可以实现统计方法执行时间，打印方法参数等功能，但是使用这种方式存在几个问题：
+
+代码有侵入性，AOP代码必须在当前项目中被引入才能完成相应的功能。
+
+无法做到灵活地开启和关闭功能。
+
+与Spring框架强耦合，如果项目没有使用Spring框架就不可以使用。
+
+所以使用Java Agent技术 + 字节码增强技术，就可以解决上述三个问题。
+
+##### ASM字节码增强技术
+
+打印方法执行的参数和耗时需要对原始类的方法进行增强，可以使用类似于Spring AOP这类面向切面编程的方式，但是考虑到并非每个项目都使用了Spring这些框架，所以我们选择的是最基础的字节码增强框架。字节码增强框架是在当前类的字节码信息中插入一部分字节码指令，从而起到增强的作用。
+
+![img](./assets/1734171142337-82.png)
+
+ASM是一个通用的 Java 字节码操作和分析框架。它可用于直接以二进制形式修改现有类或动态生成类。ASM重点关注性能。让操作尽可能小且尽可能快，所以它非常适合在动态系统中使用。ASM的缺点是代码复杂。
+
+ASM的官方网址：https://asm.ow2.io/ 操作步骤： 1、引入依赖
+
+```XML
+<dependency>
+    <groupId>org.ow2.asm</groupId>
+    <artifactId>asm</artifactId>
+    <version>9.6</version>
+</dependency>
+```
+
+2、搭建基础框架，此代码为固定代码。
+
+![img](./assets/1734171142337-83.png)
+
+3、编写一个类描述如何去增强类，类需要继承自MethodVisitor
+
+ASM基础案例：
+
+```Java
+package com.itheima.jvm.javaagent.demo05;
+
+import org.objectweb.asm.*;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.reflect.InvocationTargetException;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class ASMDemo {
+
+    public static byte[] classASM(byte[] bytes){
+        ClassWriter cw = new ClassWriter(0);
+        // cv forwards all events to cw
+        ClassVisitor cv = new ClassVisitor(ASM7, cw) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                MethodVisitor mv = cv.visitMethod(access, name, descriptor, signature, exceptions);
+                return new MyMethodVisitor(this.api,mv);
+            }
+        };
+        ClassReader cr = new ClassReader(bytes);
+        cr.accept(cv, 0);
+
+        return cw.toByteArray();
+    }
+
+    public static void main(String[] args) throws IOException, NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException {
+        InputStream inputStream = ASMDemo.class.getResourceAsStream("/com/itheima/jvm/javaagent/demo05/ASMDemo.class");
+        byte[] b1 = inputStream.readAllBytes();
+
+        byte[] b2 = classASM(b1); // b2 represents the same class as b1
+
+        //创建类加载器
+        MyClassLoader myClassLoader = new MyClassLoader();
+        Class clazz = myClassLoader.defineClass("com.itheima.jvm.javaagent.demo05.ASMDemo", b2);
+        clazz.getDeclaredConstructor().newInstance();
+    }
+}
+
+class MyClassLoader extends ClassLoader {
+    public Class defineClass(String name, byte[] b) {
+        return defineClass(name, b, 0, b.length);
+    }
+}
+
+class MyMethodVisitor extends MethodVisitor {
+
+    public MyMethodVisitor(int api, MethodVisitor methodVisitor) {
+        super(api, methodVisitor);
+    }
+
+    @Override
+    public void visitCode() {
+        mv.visitFieldInsn(Opcodes.GETSTATIC,"java/lang/System","out","Ljava/io/PrintStream;");
+        mv.visitLdcInsn("开始执行");
+        mv.visitMethodInsn(INVOKEVIRTUAL,"java/io/PrintStream","println","(Ljava/lang/String;)V",false);
+        super.visitCode();
+    }
+
+    @Override
+    public void visitInsn(int opcode) {
+        if(opcode == ARETURN || opcode == RETURN ) {
+            mv.visitFieldInsn(Opcodes.GETSTATIC,"java/lang/System","out","Ljava/io/PrintStream;");
+            mv.visitLdcInsn("结束执行");
+            mv.visitMethodInsn(INVOKEVIRTUAL,"java/io/PrintStream","println","(Ljava/lang/String;)V",false);
+        }
+        super.visitInsn(opcode);
+    }
+
+    @Override
+    public void visitEnd() {
+        mv.visitMaxs(20,50);
+        super.visitEnd();
+    }
+
+}
+```
+
+#####  Byte Buddy字节码增强技术
+
+Byte Buddy 是一个代码生成和操作库，用于在 Java 应用程序运行时创建和修改 Java 类，而无需编译器的帮助。 Byte Buddy底层基于ASM，提供了非常方便的 API。
+
+![img](./assets/1734171142337-84.png)
+
+Byte Buddy官网： https://bytebuddy.net/
+
+操作步骤：
+
+1、引入依赖
+
+```XML
+<dependency>
+    <groupId>net.bytebuddy</groupId>
+    <artifactId>byte-buddy</artifactId>
+    <version>1.14.10</version>
+</dependency>
+<dependency>
+    <groupId>net.bytebuddy</groupId>
+    <artifactId>byte-buddy-agent</artifactId>
+    <version>1.14.10</version>
+</dependency>
+```
+
+2、搭建基础框架，此代码为固定代码
+
+![img](./assets/1734171142337-85.png)
+
+3、编写一个Advice通知描述如何去增强类
+
+```Java
+package com.itheima.jvm.javaagent.demo05;
+
+import net.bytebuddy.ByteBuddy;
+import net.bytebuddy.agent.ByteBuddyAgent;
+import net.bytebuddy.asm.Advice;
+import net.bytebuddy.dynamic.DynamicType;
+import net.bytebuddy.dynamic.loading.ClassReloadingStrategy;
+import net.bytebuddy.matcher.ElementMatchers;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.reflect.InvocationTargetException;
+
+public class ByteBuddyDemo {
+    public static void main(String[] args) throws IOException, NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException {
+
+        Foo foo = new Foo();
+        MyClassLoader myClassLoader = new MyClassLoader();
+
+        Class<? extends Foo> newClazz = new ByteBuddy()
+                .subclass(Foo.class)
+                .method(ElementMatchers.any())
+                .intercept(Advice.to(MyAdvice.class))
+                .make()
+                .load(myClassLoader)
+                .getLoaded();
+
+        Foo foo1 = newClazz.getDeclaredConstructor().newInstance();
+        foo1.test();
+    }
+}
+
+class MyAdvice {
+    @Advice.OnMethodEnter
+    static void onEnter(){
+        System.out.println("方法进入");
+    }
+
+    @Advice.OnMethodExit
+    static void onExit(){
+        System.out.println("方法退出");
+    }
+
+}
+```
+
+增强后的代码：
+
+```Java
+package com.itheima.jvm.javaagent.demo05;
+
+import net.bytebuddy.agent.builder.AgentBuilder;
+import net.bytebuddy.asm.Advice;
+import net.bytebuddy.description.method.MethodDescription;
+import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.dynamic.DynamicType;
+import net.bytebuddy.implementation.MethodDelegation;
+import net.bytebuddy.matcher.ElementMatchers;
+import net.bytebuddy.utility.JavaModule;
+import org.jd.core.v1.ClassFileToJavaSourceDecompiler;
+import org.jd.core.v1.api.loader.Loader;
+import org.jd.core.v1.api.loader.LoaderException;
+import org.jd.core.v1.api.printer.Printer;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.IllegalClassFormatException;
+import java.lang.instrument.Instrumentation;
+import java.lang.instrument.UnmodifiableClassException;
+import java.security.ProtectionDomain;
+import java.util.Scanner;
+
+import static net.bytebuddy.matcher.ElementMatchers.isMethod;
+
+public class ClassEnhancerCommand {
+
+
+    //获取类信息
+    public static void enhanceClass(Instrumentation inst){
+        Scanner scanner = new Scanner(System.in);
+        System.out.println("请输入类名:");
+        String next = scanner.next();
+        Class[] allLoadedClasses = inst.getAllLoadedClasses();
+        System.out.println("要查找的类名是:" + next);
+        //匹配类名
+        for (Class clazz : allLoadedClasses) {
+            if(clazz.getName().equals(next)){
+                System.out.println("找到了类,类加载器为:" + clazz.getClassLoader());
+
+                new AgentBuilder.Default()
+                        .disableClassFormatChanges()
+                        .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
+                        .with( //new AgentBuilder.Listener.WithErrorsOnly(
+                                new AgentBuilder.Listener.WithTransformationsOnly(
+                                        AgentBuilder.Listener.StreamWriting.toSystemOut()))
+                        //.type(ElementMatchers.isAnnotatedWith(named("org.springframework.web.bind.annotation.RestController")))
+                        .type(ElementMatchers.named(clazz.getName()))
+                        .transform((builder, type, classLoader, module, protectionDomain) ->
+                                builder.visit(Advice.to(MyAdvice.class).on(ElementMatchers.any()))
+//                                builder .method(ElementMatchers.any())
+//                                        .intercept(MethodDelegation.to(MyInterceptor.class))
+                        )
+                        .installOn(inst);
+            }
+        }
+    }
+}
+package com.itheima.jvm.javaagent.demo07;
+
+import net.bytebuddy.asm.Advice;
+
+class MyAdvice {
+    @Advice.OnMethodEnter
+    static long enter(@Advice.AllArguments Object[] ary) {
+        if(ary != null) {
+            for(int i =0 ; i < ary.length ; i++){
+                System.out.println("Argument: " + i + " is " + ary[i]);
+            }
+        }
+        return System.nanoTime();
+    }
+
+    @Advice.OnMethodExit
+    static void exit(@Advice.Enter long value) {
+        System.out.println("耗时为：" + (System.nanoTime() - value) + "纳秒");
+    }
+}
+```
+
+最后将整个简化版的arthas进行打包，在服务器上进行测试。使用maven-shade-plugin插件可以将所有依赖打入同一个jar包中并指定入口main方法。
+
+```XML
+<!--打包成jar包使用-->
+
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-shade-plugin</artifactId>
+    <version>1.4</version>
+    <executions>
+        <execution>
+            <phase>package</phase>
+            <goals>
+                <goal>shade</goal>
+            </goals>
+            <configuration>
+                <finalName>itheima-attach-agent</finalName>
+                <transformers>
+                    <!--java -jar 默认启动的主类-->
+                    <transformer
+                            implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                        <mainClass>com.itheima.jvm.javaagent.AttachMain</mainClass>
+                    </transformer>
+                </transformers>
+            </configuration>
+        </execution>
+    </executions>
+</plugin>
+```
+
+### 3.3 实战案例2：APM系统的数据采集
+
+Application performance monitor (APM) 应用程序性能监控系统是采集运行程序的实时数据并使用可视化的方式展示，使用APM可以确保系统可用性，优化服务性能和响应时间，持续改善用户体验。常用的APM系统有Apache Skywalking、Zipkin等。 Skywalking官方网站: https://skywalking.apache.org/
+
+![img](./assets/1734171142337-86.png)
+
+需求：
+
+编写一个简化版的APM数据采集程序，具备以下几个功能：
+
+1、无侵入性获取spring boot应用中，controller层方法的调用时间。
+
+2、将所有调用时间写入文件中。
+
+问题：
+
+Java agent 采用静态加载模式 还是 动态加载模式？
+
+一般程序启动之后就需要持续地进行信息的采集，所以采用静态加载模式。
+
+#### Java Agent参数的获取
+
+在Java Agent中，可以通过如下的方式传递参数：
+
+java -javaagent:./agent.jar=参数 -jar test.jar
+
+接下来通过premain参数中的agentArgs字段获取：
+
+![img](./assets/1734171142337-87.png)
+
+如果有多个参数，可以使用如下方式：
+
+java -javaagent:./agent.jar=param1=value1,param2=value2 -jar test.jar
+
+在Java代码中使用字符串解析出对应的key value。
+
+在Java Agent中如果需要传递参数到Byte Buddy，可以采用如下的方式：
+
+1、绑定Key Value，Key是一个自定义注解，Value是参数的值。
+
+![img](./assets/1734171142337-88.png)
+
+2、自定义注解
+
+![img](./assets/1734171142337-89.png)
+
+3、通过注解注入
+
+![img](./assets/1734171142337-90.png)
+
+代码：
+
+```Java
+package com.itheima.javaagent;
+
+import com.itheima.javaagent.command.ClassCommand;
+import com.itheima.javaagent.command.MemoryCommand;
+import com.itheima.javaagent.command.ThreadCommand;
+import com.itheima.javaagent.enhancer.AgentParam;
+import com.itheima.javaagent.enhancer.MyAdvice;
+import com.itheima.javaagent.enhancer.TimingAdvice;
+import net.bytebuddy.agent.builder.AgentBuilder;
+import net.bytebuddy.asm.Advice;
+import net.bytebuddy.matcher.ElementMatchers;
+
+import java.lang.instrument.Instrumentation;
+import java.util.Scanner;
+
+public class AgentMain {
+    //premain方法
+    public static void premain(String agentArgs, Instrumentation inst){
+        //使用bytebuddy增强类
+        new AgentBuilder.Default()
+                //禁止byte buddy处理时修改类名
+                .disableClassFormatChanges()
+                //处理时使用retransform增强
+                .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
+                //打印出错误日志
+                .with(new AgentBuilder.Listener.WithTransformationsOnly(AgentBuilder.Listener.StreamWriting
+                        .toSystemOut()))
+                //匹配哪些类
+                .type(ElementMatchers.isAnnotatedWith(ElementMatchers.named("org.springframework.web.bind.annotation.RestController")
+                        .or(ElementMatchers.named("org.springframework.web.bind.annotation.Controller")))
+                )
+                //增强，使用MyAdvice通知，对所有方法都进行增强
+                .transform((builder, typeDescription, classLoader, module, protectionDomain) ->
+                        builder.visit(Advice
+                                        .withCustomMapping()
+                                        .bind(AgentParam.class,agentArgs)
+                                .to(TimingAdvice.class).on(ElementMatchers.any())))
+                .installOn(inst);
+    }
+
+   
+
+}
+package com.itheima.javaagent.enhancer;
+
+import net.bytebuddy.asm.Advice;
+import org.apache.commons.io.FileUtils;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+
+//统计耗时，打印方法名、类名
+public class TimingAdvice {
+
+    //方法进入时，返回开始时间
+    @Advice.OnMethodEnter
+    static long enter(){
+        return System.nanoTime();
+    }
+
+    //方法退出时候，统计方法执行耗时
+    @Advice.OnMethodExit
+    static void exit(@Advice.Enter long value,
+                     @Advice.Origin("#t") String className,
+                     @Advice.Origin("#m") String methodName,
+                     @AgentParam("agent.log") String fileName){
+        String str = methodName + "@" + className + "耗时为: " + (System.nanoTime() - value) + "纳秒\n";
+        try {
+            FileUtils.writeStringToFile(new File(fileName),str, StandardCharsets.UTF_8,true);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+修改jar包名字，并重新打包：
+
+![img](./assets/1734171142337-91.png)
+
+启动spring boot服务时，添加javaagent的路径,并添加文件名参数:
+
+![img](./assets/1734171142337-92.png)
+
+打印结果：
+
+![img](./assets/1734171142337-93.png)
+
+#### 总结：
+
+**Arthas这款工具用到了什么Java技术，有没有了解过？**
+
+回答：
+
+Arthas主要使用了Java Agent技术，这种技术可以让运行中的Java程序执行Agent中编写代码。
+
+Arthas使用了Agent中的动态加载模式，可以选择让某个特定的Java进程加载Agent并执行其中的监控代码。监控方面主要使用的就是JMX提供的一些监控指标，同时使用字节码增强技术，对某些类和某些方法进行增强，从而监控方法的执行耗时、参数等内容。
+
+**APM系统是如何获取到Java程序运行中的性能数据的？**
+
+回答：
+
+APM系统比如Skywalking主要使用了Java Agent技术，这种技术可以让运行中的Java程序执行Agent中编写代码。
+
+Skywalking编写了Java Agent，使用了Agent中的静态加载模式，使用字节码增强技术，对某些类和某些方法进行增强，从而监控方法的执行耗时、参数等内容。比如对Controller层方法增强，获取接口调用的时长信息，对数据库连接增强，获取数据库查询的时长、SQL语句等信息。
+
+
+
+# 原理篇
+
+原理篇
+
+## 1、栈上的数据存储
+
+在Java中有8大基本数据类型：
+
+![img](./assets/1734434577823-157.png)
+
+这里的内存占用，指的是堆上或者数组中内存分配的空间大小，栈上的实现更加复杂。
+
+以基础篇的这段代码为例：
+
+![img](./assets/1734434577815-1.png)
+
+Java中的8大数据类型在虚拟机中的实现：
+
+![img](./assets/1734434577815-2.png)
+
+**boolean、byte、char、short在栈上是不是存在空间浪费？**
+
+是的，Java虚拟机采用的是空间换时间方案，在栈上不存储具体的类型，只根据slot槽进行数据的处理，浪费了一些内存空间但是避免不同数据类型不同处理方式带来的时间开销。
+
+同时，像long型在64位系统中占用2个slot，使用了16字节空间，但实际上在Hotspot虚拟机中，它的高8个字节没有使用，这样就满足了long型使用8个字节的需要。
+
+boolean数据类型保存方式
+
+**需求：**
+
+编写如下代码，并查看字节码文件中对boolean数据类型处理的指令。
+
+```Java
+package demo1;
+
+public class Demo01 {
+    public static void main(String[] args) {
+        boolean a = false;
+        if(a){
+            System.out.println("a为true");
+        }else{
+            System.out.println("a为false");
+        }
+
+        if(a == true){
+            System.out.println("a为true");
+        }else{
+            System.out.println("a为false");
+        }
+    }
+}
+```
+
+1、常量1先放入局部变量表，相当于给a赋值为true。
+
+![img](./assets/1734434577815-3.png)
+
+2、将1与0比较（判断a是否为false），相当跳转到偏移量17的位置，不相等继续向下运行。这里显然是不相等的。
+
+![img](./assets/1734434577815-4.png)
+
+3、将局部变量表a的值取出来放到操作数栈中，再定义一个常量1，比对两个值是否相等。其实就是判断a == true，如果相等继续向下运行，不相等跳转到偏移量41也就是执行else部分代码。这里显然是相等的。
+
+![img](./assets/1734434577815-5.png)
+
+在Java虚拟机中栈上boolean类型保存方式与int类型相同，所以它的值如果是1代表true，如果是0代表false。但是我们可以通过修改字节码文件，让它的值超过1。
+
+**需求2：**
+
+使用ASM框架修改字节码指令，将iconst1指令修改为iconst2，并测试验证结果。
+
+1、借助于ASM插件：
+
+![img](./assets/1734434577815-6.png)
+
+2、通过插件打开ASM界面：
+
+![img](./assets/1734434577815-7.png)
+
+将代码复制出来，修改一下导出Class文件：
+
+```Java
+package demo1;
+
+import java.io.File;
+import java.util.*;
+
+import org.apache.commons.io.FileUtils;
+import org.objectweb.asm.*;
+
+public class Demo01Dump implements Opcodes {
+
+    public static void main(String[] args) throws Exception {
+        FileUtils.writeByteArrayToFile(new File("D:\\Demo01.class"),dump());
+    }
+
+    public static byte[] dump() throws Exception {
+
+        ClassWriter cw = new ClassWriter(0);
+        FieldVisitor fv;
+        MethodVisitor mv;
+        AnnotationVisitor av0;
+
+        cw.visit(52, ACC_PUBLIC + ACC_SUPER, "demo1/Demo01", null, "java/lang/Object", null);
+
+        cw.visitSource("Demo01.java", null);
+
+        {
+            mv = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+            mv.visitCode();
+            Label l0 = new Label();
+            mv.visitLabel(l0);
+            mv.visitLineNumber(3, l0);
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+            mv.visitInsn(RETURN);
+            Label l1 = new Label();
+            mv.visitLabel(l1);
+            mv.visitLocalVariable("this", "Ldemo1/Demo01;", null, l0, l1, 0);
+            mv.visitMaxs(1, 1);
+            mv.visitEnd();
+        }
+        {
+            mv = cw.visitMethod(ACC_PUBLIC + ACC_STATIC, "main", "([Ljava/lang/String;)V", null, null);
+            mv.visitCode();
+            Label l0 = new Label();
+            mv.visitLabel(l0);
+            mv.visitLineNumber(5, l0);
+            mv.visitInsn(ICONST_2);
+            mv.visitVarInsn(ISTORE, 1);
+            Label l1 = new Label();
+            mv.visitLabel(l1);
+            mv.visitLineNumber(6, l1);
+            mv.visitVarInsn(ILOAD, 1);
+            Label l2 = new Label();
+            mv.visitJumpInsn(IFEQ, l2);
+            Label l3 = new Label();
+            mv.visitLabel(l3);
+            mv.visitLineNumber(7, l3);
+            mv.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+            mv.visitLdcInsn("a\u4e3atrue");
+            mv.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+            Label l4 = new Label();
+            mv.visitJumpInsn(GOTO, l4);
+            mv.visitLabel(l2);
+            mv.visitLineNumber(9, l2);
+            mv.visitFrame(Opcodes.F_APPEND, 1, new Object[]{Opcodes.INTEGER}, 0, null);
+            mv.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+            mv.visitLdcInsn("a\u4e3afalse");
+            mv.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+            mv.visitLabel(l4);
+            mv.visitLineNumber(12, l4);
+            mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+            mv.visitVarInsn(ILOAD, 1);
+            mv.visitInsn(ICONST_1);
+            Label l5 = new Label();
+            mv.visitJumpInsn(IF_ICMPNE, l5);
+            Label l6 = new Label();
+            mv.visitLabel(l6);
+            mv.visitLineNumber(13, l6);
+            mv.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+            mv.visitLdcInsn("a\u4e3atrue");
+            mv.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+            Label l7 = new Label();
+            mv.visitJumpInsn(GOTO, l7);
+            mv.visitLabel(l5);
+            mv.visitLineNumber(15, l5);
+            mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+            mv.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+            mv.visitLdcInsn("a\u4e3afalse");
+            mv.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+            mv.visitLabel(l7);
+            mv.visitLineNumber(17, l7);
+            mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+            mv.visitInsn(RETURN);
+            Label l8 = new Label();
+            mv.visitLabel(l8);
+            mv.visitLocalVariable("args", "[Ljava/lang/String;", null, l0, l8, 0);
+            mv.visitLocalVariable("a", "Z", null, l1, l8, 1);
+            mv.visitMaxs(2, 2);
+            mv.visitEnd();
+        }
+        cw.visitEnd();
+
+        return cw.toByteArray();
+    }
+}
+```
+
+注意这句已经修改为iconst_2:
+
+![img](./assets/1734434577815-8.png)
+
+使用jclasslib查看字节码文件：
+
+![img](./assets/1734434577815-9.png)
+
+执行字节码文件：
+
+![img](./assets/1734434577815-10.png)
+
+这里就出现了两个判断语句结果不一致的情况：
+
+第一个判断是将2和0比较，如果不相同就继续运行if下面的分支不会走else分支，显然会走if下面的分支。
+
+![img](./assets/1734434577816-11.png)
+
+第二个判断是将2和1比较，相等走if下面的分支，否则走else。这里由于2和1不相等就会走else分支。
+
+![img](./assets/1734434577816-12.png)
+
+**这个案例就可以证明****在栈上boolean类型确实是使用了int类型来保存的。**
+
+栈中的数据要保存到堆上或者从堆中加载到栈上时怎么处理？
+
+1、堆中的数据加载到栈上，由于栈上的空间大于或者等于堆上的空间，所以直接处理但是需要注意下符号位。
+
+boolean、char为无符号，低位复制，高位补0
+
+![img](./assets/1734434577816-13.png)
+
+![img](./assets/1734434577816-14.png)
+
+byte、short为有符号，低位复制，高位非负则补0，负则补1
+
+![img](./assets/1734434577816-15.png)
+
+![img](./assets/1734434577816-16.png)
+
+2、栈中的数据要保存到堆上，byte、char、short由于堆上存储空间较小，需要将高位去掉。boolean比较特殊，只取低位的最后一位保存。
+
+![img](./assets/1734434577816-17.png)
+
+![img](./assets/1734434577816-18.png)
+
+### 案例：验证boolean从栈保存到堆上只取最后一位
+
+将a保存在堆上（使用static），使用ASM框架修改字节码指令，将iconst1指令修改为iconst2和iconst3，并测试验证结果。
+
+```Java
+package demo1;
+
+public class Demo02 {
+    static boolean a;
+    public static void main(String[] args) {
+        a = true;
+        if(a){
+            System.out.println("a为true");
+        }else{
+            System.out.println("a为false");
+        }
+
+        if(a == true){
+            System.out.println("a为true");
+        }else{
+            System.out.println("a为false");
+        }
+    }
+}
+```
+
+完整生成class字节码文件的代码:
+
+```Java
+package demo1;
+
+import java.io.File;
+import java.util.*;
+
+import org.apache.commons.io.FileUtils;
+import org.objectweb.asm.*;
+
+public class Demo02Dump implements Opcodes {
+
+    public static void main(String[] args) throws Exception {
+        FileUtils.writeByteArrayToFile(new File("D:\\demo1\\Demo02.class"),dump());
+    }
+
+    public static byte[] dump() throws Exception {
+
+        ClassWriter cw = new ClassWriter(0);
+        FieldVisitor fv;
+        MethodVisitor mv;
+        AnnotationVisitor av0;
+
+        cw.visit(52, ACC_PUBLIC + ACC_SUPER, "demo1/Demo02", null, "java/lang/Object", null);
+
+        cw.visitSource("Demo02.java", null);
+
+        {
+            fv = cw.visitField(ACC_STATIC, "a", "Z", null, null);
+            fv.visitEnd();
+        }
+        {
+            mv = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+            mv.visitCode();
+            Label l0 = new Label();
+            mv.visitLabel(l0);
+            mv.visitLineNumber(3, l0);
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+            mv.visitInsn(RETURN);
+            Label l1 = new Label();
+            mv.visitLabel(l1);
+            mv.visitLocalVariable("this", "Ldemo1/Demo02;", null, l0, l1, 0);
+            mv.visitMaxs(1, 1);
+            mv.visitEnd();
+        }
+        {
+            mv = cw.visitMethod(ACC_PUBLIC + ACC_STATIC, "main", "([Ljava/lang/String;)V", null, null);
+            mv.visitCode();
+            Label l0 = new Label();
+            mv.visitLabel(l0);
+            mv.visitLineNumber(6, l0);
+            mv.visitInsn(ICONST_3);
+            mv.visitFieldInsn(PUTSTATIC, "demo1/Demo02", "a", "Z");
+            Label l1 = new Label();
+            mv.visitLabel(l1);
+            mv.visitLineNumber(7, l1);
+            mv.visitFieldInsn(GETSTATIC, "demo1/Demo02", "a", "Z");
+            Label l2 = new Label();
+            mv.visitJumpInsn(IFEQ, l2);
+            Label l3 = new Label();
+            mv.visitLabel(l3);
+            mv.visitLineNumber(8, l3);
+            mv.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+            mv.visitLdcInsn("a\u4e3atrue");
+            mv.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+            Label l4 = new Label();
+            mv.visitJumpInsn(GOTO, l4);
+            mv.visitLabel(l2);
+            mv.visitLineNumber(10, l2);
+            mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+            mv.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+            mv.visitLdcInsn("a\u4e3afalse");
+            mv.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+            mv.visitLabel(l4);
+            mv.visitLineNumber(13, l4);
+            mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+            mv.visitFieldInsn(GETSTATIC, "demo1/Demo02", "a", "Z");
+            mv.visitInsn(ICONST_1);
+            Label l5 = new Label();
+            mv.visitJumpInsn(IF_ICMPNE, l5);
+            Label l6 = new Label();
+            mv.visitLabel(l6);
+            mv.visitLineNumber(14, l6);
+            mv.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+            mv.visitLdcInsn("a\u4e3atrue");
+            mv.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+            Label l7 = new Label();
+            mv.visitJumpInsn(GOTO, l7);
+            mv.visitLabel(l5);
+            mv.visitLineNumber(16, l5);
+            mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+            mv.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+            mv.visitLdcInsn("a\u4e3afalse");
+            mv.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+            mv.visitLabel(l7);
+            mv.visitLineNumber(18, l7);
+            mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+            mv.visitInsn(RETURN);
+            Label l8 = new Label();
+            mv.visitLabel(l8);
+            mv.visitLocalVariable("args", "[Ljava/lang/String;", null, l0, l8, 0);
+            mv.visitMaxs(2, 1);
+            mv.visitEnd();
+        }
+        cw.visitEnd();
+
+        return cw.toByteArray();
+    }
+}
+```
+
+对于iconst2来说：
+
+![img](./assets/1734434577816-19.png)
+
+2的最后两位是10，所以只取最末尾0。
+
+![img](./assets/1734434577816-20.png)
+
+对于iconst3来说：
+
+![img](./assets/1734434577816-21.png)
+
+2的最后两位是11，所以只取最末尾1。
+
+![img](./assets/1734434577816-22.png)
+
+## 2、对象在堆上是如何存储的？
+
+对象在堆中的内存布局，指的是对象在堆中存放时的各个组成部分，主要分为以下几个部分：
+
+![img](./assets/1734434577816-23.png)
+
+### 标记字段
+
+标记字段相对比较复杂。在不同的对象状态（有无锁、是否处于垃圾回收的标记中）下存放的内容是不同的，同时在64位（又分为是否开启指针压缩）、32位虚拟机中的布局都不同。以64位开启指针压缩为例：
+
+![img](./assets/1734434577816-24.png)
+
+怎么确认标记字段的内容呢？我们可以使用JOL，JOL是用于分析 JVM 中对象布局的一款专业工具。工具中使用 Unsafe、JVMTI 和 Serviceability Agent (SA)等虚拟机技术来打印实际的对象内存布局。
+
+使用方法：
+
+1、添加依赖
+
+```XML
+<dependency>
+    <groupId>org.openjdk.jol</groupId>
+    <artifactId>jol-core</artifactId>
+    <version>0.9</version>
+</dependency>
+```
+
+2、使用如下代码打印对象内存布局：
+
+ `System.out.println(ClassLayout.parseInstance(对象).toPrintable());`
+
+代码：
+
+```Java
+package oop1;
+
+import org.openjdk.jol.info.ClassLayout;
+
+import java.io.IOException;
+//-XX:-UseCompressedOops 关闭压缩指针
+public class Student {
+    private long id;
+    private int age;
+    private String name;
+
+    public long getId() {
+        return id;
+    }
+
+    public void setId(long id) {
+        this.id = id;
+    }
+
+    public int getAge() {
+        return age;
+    }
+
+    public void setAge(int age) {
+        this.age = age;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public static void main(String[] args) throws IOException {
+        Student student = new Student();
+        System.out.println(Integer.toBinaryString(student.hashCode()));
+        System.out.println(ClassLayout.parseInstance(student).toPrintable());
+        System.in.read();
+    }
+}
+//0010011 01011111 10111010 10100100
+//  0x26163608
+```
+
+打印结果如下：
+
+![img](./assets/1734434577816-25.png)
+
+和hashcode值是一致的（注意小端存储，结果会倒着写）
+
+![img](./assets/1734434577816-26.png)
+
+![img](./assets/1734434577816-27.png)
+
+### 元数据的指针
+
+Klass pointer元数据的指针指向方法区中保存的InstanceKlass对象：
+
+![img](./assets/1734434577817-28.png)
+
+### 指针压缩
+
+在64位的Java虚拟机中，Klass Pointer以及对象数据中的对象引用都需要占用8个字节，为了减少这部分的内存使用量，64 位 Java 虚拟机使用指针压缩技术，将堆中原本 8个字节的 指针压缩成 4个字节 ，此功能默认开启，可以使用-XX:-UseCompressedOops关闭。
+
+![img](./assets/1734434577817-29.png)
+
+指针压缩的思想是将寻址的单位放大，比如原来按1字节去寻址，现在可以按8字节寻址。如下图所示，原来按1去寻址，能拿到1字节开始的数据，现在按1去寻址，就可以拿到8个字节开始的数据。
+
+![img](./assets/1734434577817-30.png)
+
+这与停车场是类似的。以前需要记录我的车占用了那几米的空间，现在只需要记下停车场的编号：
+
+![img](./assets/1734434577817-31.png)
+
+这样将编号当成地址，就可以用更小的内存访问更多的数据。但是这样的做法有两个问题：
+
+1、需要进行内存对齐，指的是将对象的内存占用填充至8字节的倍数。存在空间浪费（对于Hotspot来说不存在，即便不开启指针压缩，也需要进行内存对齐）
+
+![img](./assets/1734434577817-32.png)
+
+2、寻址大小仅仅能支持2的35 次方个字节（32GB，如果超过32GB指针压缩会自动关闭）。不用压缩指针，应该是2的64次方 = 16EB，用了压缩指针就变成了8（字节） = 2的3次方 * 2的32次方 = 2的35次方
+
+![img](./assets/1734434577817-33.png)
+
+#### 案例：在hsdb工具中验证klass pointer正确性
+
+操作步骤：
+
+1、使用JOL打印对象的Klass Pointer。
+
+2、使用Klass Pointer的地址，在hsdb工具中使用Inspector找到InstanceKlass对象。
+
+注意：由于使用了小端存储，打印的地址要反着读。
+
+![img](./assets/1734434577817-34.png)
+
+这个0x254d3608就是klass对象的地址：
+
+![img](./assets/1734434577817-35.png)
+
+### 内存对齐
+
+对象中还有一部分内容就是对齐。内存对齐指的是对象中会空出来几个字节，不做任何数据存储。内存对齐主要目的是为了解决并发情况下CPU缓存失效的问题：
+
+在内存中缓存了A和B的数据
+
+![img](./assets/1734434577817-36.png)
+
+A的数据写入时，由于A和B在同一个缓存行中，所以A和B的缓存数据都会被清空:
+
+![img](./assets/1734434577817-37.png)
+
+这样就需要再从内存中读取一次：
+
+![img](./assets/1734434577817-38.png)
+
+我们只修改了A对象的数据，引起了B对象的缓存失效。
+
+内存对齐解决了这个问题：内存对齐之后，同一个缓存行中不会出现不同对象的属性。在并发情况下，如果让A对象一个缓存行失效，是不会影响到B对象的缓存行的。
+
+![img](./assets/1734434577817-39.png)
+
+内存对齐要求每个对象字节数是8的倍数，除了添加字节填充之外，还有字段的要求。
+
+在Hotspot中，要求每个属性的偏移量Offset（字段地址 –  起始地址）必须是字段长度的N倍。
+
+比如下图中，Student类中的id属性类型为long，那么偏移量就必须是8的倍数。所以将id和age的字段顺序进行了调整，这种方式叫**字段重排列**。
+
+![img](./assets/1734434577817-40.png)
+
+这样可以更容易让一个字段在一整个缓存行中，提升缓存行读取的效率。
+
+如果不满足要求，会尝试使用内存对齐，通过在属性之间插入一块对齐区域达到目的。
+
+如下图中，name字段是引用占用8个字节（关闭了指针压缩），所以Offset必须是8的倍数，在age和name之间插入了4个字节的空白区域。
+
+![img](./assets/1734434577817-41.png)
+
+#### 案例：子类和父类的偏移量
+
+需求：
+
+通过如下代码验证下：子类继承自父类的属性，属性的偏移量和父类是一致的。
+
+```Java
+package oop1;
+
+class A {
+    long l;
+    int i;
+    String name;
+}
+
+class B extends A {
+    long l;
+    int i;
+}
+
+class C{
+    long l1;
+    int i1;
+    String name;
+    long l2;
+    int i2;
+}
+```
+
+结果如下：
+
+![img](./assets/1734434577817-42.png)
+
+总结：
+
+![img](./assets/1734434577817-43.png)
+
+## 3、方法调用的原理
+
+方法调用的本质是通过字节码指令的执行，能在栈上创建栈帧，并执行调用方法中的字节码执行。以invoke开头的字节码指令的作用是执行方法的调用。
+
+1、调用study方法，会执行invokestatic指令，Java虚拟机找到#2对应的方法，也就是study方法，创建栈帧。
+
+![img](./assets/1734434577817-44.png)
+
+2、eat和sleep方法也是类似的处理方式。
+
+![img](./assets/1734434577817-45.png)
+
+3、方法栈帧创建之后，就可以执行方法里的字节码指令了。
+
+![img](./assets/1734434577817-46.png)
+
+在JVM中，一共有五个字节码指令可以执行方法调用：
+
+1、invokestatic：调用静态方法
+
+![img](./assets/1734434577818-47.png)
+
+2、invokespecial: 调用对象的private方法、构造方法，以及使用 super 关键字调用父类实例的方法、构造方法，以及所实现接口的默认方法。
+
+![img](./assets/1734434577818-48.png)
+
+3、invokevirtual：调用对象的非private方法。
+
+![img](./assets/1734434577818-49.png)
+
+4、invokeinterface：调用接口对象的方法。
+
+![img](./assets/1734434577818-50.png)
+
+5、invokedynamic：用于调用动态方法，主要应用于lambda表达式中，机制极为复杂了解即可。
+
+**Invoke方法的核心作用就是找到字节码指令并执行。**
+
+Invoke指令执行时，需要找到方法区中instanceKlass中保存的方法相关的字节码信息。但是方法区中有很多类，每一个类又包含很多个方法，怎么精确地定位到方法的位置呢？
+
+![img](./assets/1734434577818-51.png)
+
+### 静态绑定
+
+1、编译期间，invoke指令会携带一个参数符号引用，引用到常量池中的方法定义。方法定义中包含了类名 + 方法名 + 返回值 + 参数。
+
+![img](./assets/1734434577818-52.png)
+
+2、在方法第一次调用时，这些符号引用就会被替换成内存地址的直接引用，这种方式称之为静态绑定。
+
+![img](./assets/1734434577818-53.png)
+
+静态绑定适用于处理静态方法、私有方法、或者使用final修饰的方法，因为这些方法不能被继承之后重写。
+
+invokestatic
+
+invokespecial
+
+final修饰的invokevirtual
+
+### 动态绑定
+
+对于非static、非private、非final的方法，有可能存在子类重写方法，那么就需要通过动态绑定来完成方法地址绑定的工作。比如在这段代码中，调用的其实是Cat类对象的eat方法，但是编译完之后虚拟机指令中调用的是Animal类的eat方法，这就需要在运行过程中通过动态绑定找到Cat类的eat方法，这样就实现了多态。
+
+![img](./assets/1734434577818-54.png)
+
+动态绑定是基于方法表来完成的，invokevirtual使用了虚方法表（vtable），invokeinterface使用了接口方法表(itable)，整体思路类似。所以接下来使用invokevirtual和虚方法表来解释整个过程。
+
+每个类中都有一个虚方法表，本质上它是一个数组，记录了方法的地址。子类方法表中包含父类方法表中的所有方法；子类如果重写了父类方法，则使用自己类中方法的地址进行替换。
+
+![img](./assets/1734434577818-55.png)
+
+产生invokevirtual调用时，先根据对象头中的类型指针找到方法区中InstanceClass对象，获得虚方法表。再根据虚方法表找到对应的对方，获得方法的地址，最后调用方法。
+
+![img](./assets/1734434577818-56.png)
+
+代码：
+
+```Java
+package invokemethod;
+
+import java.io.IOException;
+
+//-XX:-UseCompressedOops
+public abstract class Animal {
+
+    public abstract void eat();
+
+    @Override
+    public String toString() {
+        return "Animal";
+    }
+
+    public static void main(String[] args) throws IOException {
+        Animal animal = new Cat();
+        animal.eat();
+        System.in.read();
+    }
+}
+
+class Cat extends Animal {
+
+    @Override
+    public void eat() {
+        System.out.println("吃鱼");
+    }
+
+    void jump() {
+        System.out.println("猫跳了一下");
+    }
+
+}
+
+
+class Dog extends Animal {
+
+    @Override
+    public void eat() {
+        System.out.println("啃骨头");
+    }
+}
+```
+
+**演示动态绑定：**
+
+1、在HSDB中，打开Query查询界面：
+
+![img](./assets/1734434577818-57.png)
+
+2、写上类似SQL的查询语句，查询Cat类：
+
+![img](./assets/1734434577818-58.png)
+
+3、查到了这个对象，但是看不到虚方法表里的内容，虚方法表数组长度为7。
+
+![img](./assets/1734434577818-59.png)
+
+4、打开控制台界面。查询2个字word长度的内容，一个字代表CPU字长，32位4个字节，64位8个字节。
+
+![img](./assets/1734434577818-60.png)
+
+![img](./assets/1734434577819-61.png)
+
+5、获得第二个字的内容，第一个8字节是markword，第二个8字节就指向InstanceKlass对象。
+
+![img](./assets/1734434577819-62.png)
+
+![img](./assets/1734434577819-63.png)
+
+但是很遗憾，还是看不到具体的内容，hsdb没有显示那么清楚。
+
+6、直接根据固定的偏移量计算虚方法表的地址，初始地址+1B8:
+
+![img](./assets/1734434577819-64.png)
+
+7、通过控制台的mem命令查询，长度为7，就查7个字长。
+
+![img](./assets/1734434577819-65.png)
+
+8、右边显示的就是方法的地址。这些方法不是来自于父类，可就是来自于当前类。
+
+![img](./assets/1734434577819-66.png)
+
+产生invokevirtual调用时，先根据对象头中的类型指针找到方法区中InstanceClass对象，获得虚方法表。再根据虚方法表找到对应的对方，获得方法的地址，最后调用方法。
+
+![img](./assets/1734434577819-67.png)
+
+### 总结：
+
+在JVM中，一共有五个字节码指令可以执行方法调用：
+
+1、invokestatic：调用静态方法。静态绑定
+
+2、invokespecial: 调用对象的private方法、构造方法，以及使用 super 关键字调用父类实例的方法、构造方法，以及所实现接口的默认方法。静态绑定
+
+3、invokevirtual：调用对象的非private方法。非final方法使用动态绑定，使用虚方法表找到方法的地址，子类会复制父类的虚方法表，如果子类重写了方法，会替换成重写后方法的地址。
+
+4、invokeinterface：调用接口对象的方法。动态绑定，使用接口表找到方法的地址，进行调用。
+
+5、invokedynamic：用于调用动态方法，主要应用于lambda表达式中，机制极为复杂了解即可。
+
+Invoke方法的核心作用就是找到字节码指令并执行。
+
+## 4、异常捕获的原理
+
+在Java中，程序遇到异常时会向外抛出，此时可以使用try-catch捕获异常的方式将异常捕获并继续让程序按程序员设计好的方式运行。比如如下代码：在try代码块中如果抛出了Exception对象或者子类对象，则会进入catch分支。
+
+异常捕获机制的实现，需要借助于编译时生成的异常表。
+
+异常表在编译期生成，存放的是代码中异常的处理信息，包含了异常捕获的生效范围以及异常发生后跳转到的字节码指令位置。
+
+起始/结束PC：此条异常捕获生效的字节码起始/结束位置。
+
+跳转PC：异常捕获之后，跳转到的字节码位置。
+
+![img](./assets/1734434577819-68.png)
+
+在位置2到4字节码指令执行范围内，如果出现了Exception对象的异常或者子类对象异常，直接跳转到位置7的指令。也就是i = 2代码位置。
+
+![img](./assets/1734434577819-69.png)
+
+程序运行中触发异常时，Java 虚拟机会从上至下遍历异常表中的所有条目。当触发异常的字节码的索引值在某个异常表条目的监控范围内，Java 虚拟机会判断所抛出的异常和该条目想要捕获的异常是否匹配。
+
+1、如果匹配，跳转到“跳转PC”对应的字节码位置。
+
+2、如果遍历完都不能匹配，说明异常无法在当前方法执行时被捕获，此方法栈帧直接弹出，在上一层的栈帧中进行异常捕获的查询。
+
+![img](./assets/1734434577819-70.png)
+
+多个catch分支情况下，异常表会从上往下遍历，先捕获RuntimeException，如果捕获不了，再捕获Exception。
+
+![img](./assets/1734434577819-71.png)
+
+finally的处理方式就相对比较复杂一点了，分为以下几个步骤：
+
+1、finally中的字节码指令会插入到try 和 catch代码块中,保证在try和catch执行之后一定会执行finally中的代码。
+
+如下，在`i=1`和`i=2`两段字节码指令之后，都加入了finally下的字节码指令。
+
+![img](./assets/1734434577819-72.png)
+
+2、如果抛出的异常范围超过了Exception，比如Error或者Throwable，此时也要执行finally，所以异常表中增加了两个条目。覆盖了try和catch两段字节码指令的范围，any代表可以捕获所有种类的异常。
+
+![img](./assets/1734434577819-73.png)
+
+![img](./assets/1734434577819-74.png)
+
+## 5、JIT即时编译器
+
+在Java中，JIT即时编译器是一项用来提升应用程序代码执行效率的技术。字节码指令被 Java 虚拟机解释执行，如果有一些指令执行频率高，称之为热点代码，这些字节码指令则被JIT即时编译器编译成机器码同时进行一些优化，最后保存在内存中，将来执行时直接读取就可以运行在计算机硬件上了。
+
+![img](./assets/1734434577819-75.png)
+
+在HotSpot中，有三款即时编译器，C1、C2和Graal，其中Graal在GraalVM章节中已经介绍过。
+
+C1编译效率比C2快，但是优化效果不如C2。所以C1适合优化一些执行时间较短的代码，C2适合优化服务端程序中长期执行的代码。
+
+![img](./assets/1734434577819-76.png)
+
+JDK7之后，采用了分层编译的方式，在JVM中C1和C2会一同发挥作用，分层编译将整个优化级别分成了5个等级。
+
+| 等级 | 使用的组件   | 描述                                 | 保存的内容                                             | 性能打分（1 - 5） |
+| ---- | ------------ | ------------------------------------ | ------------------------------------------------------ | ----------------- |
+| 0    | 解释器       | 解释执行记录方法调用次数及循环次数   | 无                                                     | 1                 |
+| 1    | C1即时编译器 | C1完整优化                           | 优化后的机器码                                         | 4                 |
+| 2    | C1即时编译器 | C1完整优化记录方法调用次数及循环次数 | 优化后的机器码部分额外信息：方法调用次数及循环次数     | 3                 |
+| 3    | C1即时编译器 | C1完整优化记录所有额外信息           | 优化后的机器码所有额外信息：分支跳转次数、类型转换等等 | 2                 |
+| 4    | C2即时编译器 | C2完整优化                           | 优化后的机器码                                         | 5                 |
+
+C1即时编译器和C2即时编译器都有独立的线程去进行处理，内部会保存一个队列，队列中存放需要编译的任务。一般即时编译器是针对方法级别来进行优化的，当然也有对循环进行优化的设计。
+
+![img](./assets/1734434577819-77.png)
+
+详细来看看C1和C2是如何进行协作的：
+
+1、先由C1执行过程中收集所有运行中的信息，方法执行次数、循环执行次数、分支执行次数等等，然后等待执行次数触发阈值（分层即时编译由JVM动态计算）之后，进入C2即时编译器进行深层次的优化。
+
+![img](./assets/1734434577819-78.png)
+
+2、方法字节码执行数目过少，先收集信息，JVM判断C1和C2优化性能差不多，那之后转为不收集信息，由C1直接进行优化。
+
+![img](./assets/1734434577819-79.png)
+
+3、C1线程都在忙碌的情况下，直接由C2进行优化。
+
+![img](./assets/1734434577819-80.png)
+
+4、C2线程忙碌时，先由2层C1编译收集一些基础信息，多运行一会儿，然后再交由3层C1处理，由于3层C1处理效率不高，所以尽量减少这一层停留时间（C2忙碌着，一直收集也没有意义），最后C2线程不忙碌了再交由C2进行处理。
+
+![img](./assets/1734434577820-81.png)
+
+### 案例：测试JIT即时编译器的优化效果
+
+需求：
+
+1、编写JMH案例，代码如下：
+
+```Java
+/*
+ * Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
+ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+ *
+ * This code is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 only, as
+ * published by the Free Software Foundation.  Oracle designates this
+ * particular file as subject to the "Classpath" exception as provided
+ * by Oracle in the LICENSE file that accompanied this code.
+ *
+ * This code is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ * version 2 for more details (a copy is included in the LICENSE file that
+ * accompanied this code).
+ *
+ * You should have received a copy of the GNU General Public License version
+ * 2 along with this work; if not, write to the Free Software Foundation,
+ * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+ *
+ * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+ * or visit www.oracle.com if you need additional information or have any
+ * questions.
+ */
+
+package org.sample;
+
+import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.infra.Blackhole;
+import org.openjdk.jmh.runner.Runner;
+import org.openjdk.jmh.runner.RunnerException;
+import org.openjdk.jmh.runner.options.Options;
+import org.openjdk.jmh.runner.options.OptionsBuilder;
+
+import java.util.concurrent.TimeUnit;
+//执行5轮预热，每次持续1秒
+@Warmup(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)
+//执行一次测试
+@Fork(value = 1, jvmArgsAppend = {"-Xms1g", "-Xmx1g"})
+//显示平均时间，单位纳秒
+@BenchmarkMode(Mode.AverageTime)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
+@State(Scope.Benchmark)
+public class MyJITBenchmark {
+
+    public int add (int a,int b){
+        return a + b;
+    }
+
+    public int jitTest(){
+        int sum = 0;
+        for (int i = 0; i < 10000000; i++) {
+            sum = add(sum,100);
+        }
+        return sum;
+    }
+
+
+    //禁用JIT
+    @Benchmark
+    @Fork(value = 1,jvmArgsAppend = {"-Xint"})
+    public void testNoJIT(Blackhole blackhole) {
+        int i = jitTest();
+        blackhole.consume(i);
+    }
+
+    //只使用C1 1层
+    @Benchmark
+    @Fork(value = 1,jvmArgsAppend = {"-XX:TieredStopAtLevel=1"})
+    public void testC1(Blackhole blackhole) {
+        int i = jitTest();
+        blackhole.consume(i);
+    }
+
+    //分层编译
+    @Benchmark
+    public void testMethod(Blackhole blackhole) {
+        int i = jitTest();
+        blackhole.consume(i);
+    }
+
+    public static void main(String[] args) throws RunnerException {
+        Options opt = new OptionsBuilder()
+                .include(MyJITBenchmark.class.getSimpleName())
+                .forks(1)
+                .build();
+
+        new Runner(opt).run();
+    }
+}
+```
+
+2、分别采用三种不同虚拟机参数测试JIT优化效果：不加参数（开启完全JIT即时编译），-Xint（关闭JIT只使用解释器）、-XX:TieredStopAtLevel=1（分层编译下只使用1层C1进行编译）
+
+测试结果如下：
+
+![img](./assets/1734434577820-82.png)
+
+JIT编译器主要优化手段是方法内联和逃逸分析。
+
+### 方法内联
+
+方法内联（Method Inline）：方法体中的字节码指令直接复制到调用方的字节码指令中，节省了创建栈帧的开销。
+
+![img](./assets/1734434577820-83.png)
+
+需求： 1、安装JIT Watch工具，下载源码：https://github.com/AdoptOpenJDK/jitwatch/tree/1.4.2 2、使用资料中提供的脚本文件直接启动。
+
+![img](./assets/1734434577820-84.png)
+
+3、添加源代码目录，点击沙箱环境RUN：
+
+![img](./assets/1734434577820-85.png)
+
+4、通过JIT Watch观察到通过C1调用多次收集信息之后，进入C2优化。C2优化之后的机器码大小非常小。
+
+![img](./assets/1734434577820-86.png)
+
+5、方法调用进行了内联优化，汇编代码中直接使用乘法计算出值再进行累加，这样效率更高。
+
+![img](./assets/1734434577820-87.png)
+
+并不是所有的方法都可以内联，内联有一定的限制：
+
+1、方法编译之后的字节码指令总大小 < 35字节，可以直接内联。（通过-XX:MaxInlineSize=值 控制）
+
+2、方法编译之后的字节码指令总大小 < 325字节，并且是一个热方法。（通过-XX:FreqInlineSize=值 控制）
+
+3、方法编译生成的机器码不能大于1000字节。（通过-XX:InlineSmallCode=值 控制）
+
+4、一个接口的实现必须小于3个，如果大于三个就不会发生内联。
+
+#### 案例：String的toUpperCase方法性能优化
+
+需求：
+
+1、String的toUpperCase为了适配很多种不同的语言导致方法编译出来的字节码特别大，通过编写一个方法只处理a-z的大写转换提升性能。
+
+2、通过JIT Watch观察方法内联的情况。
+
+```Java
+import java.util.Locale;
+
+public class UpperCase
+{
+        public String upper;
+
+        public UpperCase()
+        {
+                int iterations = 10_000_000;
+
+                String source = "Lorem ipsum dolor sit amet, sensibus partiendo eam at.";
+
+                long start = System.currentTimeMillis();
+                convertString(source, iterations);
+                System.out.println(upper);
+                System.out.println(System.currentTimeMillis() - start);
+
+                start = System.currentTimeMillis();
+                convertCustom(source, iterations);
+                System.out.println(upper);
+                System.out.println(System.currentTimeMillis() - start);
+        }
+
+        private void convertString(String source, int iterations)
+        {
+                for (int i = 0; i < iterations; i++)
+                {
+                        upper = source.toUpperCase(Locale.getDefault());
+                }
+        }
+
+        private void convertCustom(String source, int iterations)
+        {
+                for (int i = 0; i < iterations; i++)
+                {
+                        upper = doUpper(source);
+                }
+        }
+
+        private String doUpper(String source)
+        {
+                StringBuilder builder = new StringBuilder();
+
+                int len = source.length();
+
+                for (int i = 0; i < len; i++)
+                {
+                        char c = source.charAt(i);
+
+                        if (c >= 'a' && c <= 'z')
+                        {
+                                c -= 32;
+                        }
+
+                        builder.append(c);
+                }
+
+                return builder.toString();
+        }
+
+        public static void main(String[] args)
+        {
+                new UpperCase();
+        }
+}
+```
+
+3、通过JIT测试性能：
+
+```Java
+import java.util.Locale;
+
+public class UpperCase
+{
+        public String upper;
+
+        public UpperCase()
+        {
+                int iterations = 10_000_000;
+
+                String source = "Lorem ipsum dolor sit amet, sensibus partiendo eam at.";
+
+                long start = System.currentTimeMillis();
+                convertString(source, iterations);
+                System.out.println(upper);
+                System.out.println(System.currentTimeMillis() - start);
+
+                start = System.currentTimeMillis();
+                convertCustom(source, iterations);
+                System.out.println(upper);
+                System.out.println(System.currentTimeMillis() - start);
+        }
+
+        private void convertString(String source, int iterations)
+        {
+                for (int i = 0; i < iterations; i++)
+                {
+                        upper = source.toUpperCase(Locale.getDefault());
+                }
+        }
+
+        private void convertCustom(String source, int iterations)
+        {
+                for (int i = 0; i < iterations; i++)
+                {
+                        upper = doUpper(source);
+                }
+        }
+
+        private String doUpper(String source)
+        {
+                StringBuilder builder = new StringBuilder();
+
+                int len = source.length();
+
+                for (int i = 0; i < len; i++)
+                {
+                        char c = source.charAt(i);
+
+                        if (c >= 'a' && c <= 'z')
+                        {
+                                c -= 32;
+                        }
+
+                        builder.append(c);
+                }
+
+                return builder.toString();
+        }
+
+        public static void main(String[] args)
+        {
+                new UpperCase();
+        }
+}
+```
+
+最终结果:
+
+![img](./assets/1734434577820-88.png)
+
+自行实现的方法性能要比JDK默认提供的高很多，当然只支持对a-z做大写化。
+
+### 逃逸分析
+
+逃逸分析指的是如果JIT发现在方法内创建的对象不会被外部引用，那么就可以采用锁消除、标量替换等方式进行优化。
+
+这段代码可以使用逃逸分析进行优化，因为test对象不会被外部引用，只会在方法中使用。
+
+![img](./assets/1734434577820-89.png)
+
+这段代码就会有一定的问题，如果在方法中对象被其他静态变量引用，那优化就无法进行。
+
+![img](./assets/1734434577820-90.png)
+
+#### **锁消除**
+
+逃逸分析中的**锁消除**指的是如果对象被判断不会逃逸出去，那么在对象就不存在并发访问问题，对象上的锁处理都不会执行，从而提高性能。比如如下写法
+
+![img](./assets/1734434577820-91.png)
+
+锁消除优化在真正的工作代码中并不常见，一般加锁的对象都是支持多线程去访问的。
+
+#### 标量替换
+
+逃逸分析真正对性能优化比较大的方式是标量替换，在Java虚拟机中，对象中的基本数据类型称为标量，引用的其他对象称为聚合量。标量替换指的是如果方法中的对象不会逃逸，那么其中的标量就可以直接在栈上分配。
+
+如下图中，point对象不存在逃逸，那么就可以将test方法中的字节码指令直接挪到循环中，减少方法调用的开销。
+
+![img](./assets/1734434577820-92.png)
+
+**性能测试**
+
+**需求：**
+
+1、编写JMH性能测试案例，测试方法内联和标量替换之后的性能变化。
+
+2、分别使用三种不同虚拟机参数进行测试：
+
+- 开启方法内联和标量替换
+- 关闭标量替换
+- 关闭所有优化
+
+3、比对测试结果。
+
+```Java
+/*
+ * Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
+ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+ *
+ * This code is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 only, as
+ * published by the Free Software Foundation.  Oracle designates this
+ * particular file as subject to the "Classpath" exception as provided
+ * by Oracle in the LICENSE file that accompanied this code.
+ *
+ * This code is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ * version 2 for more details (a copy is included in the LICENSE file that
+ * accompanied this code).
+ *
+ * You should have received a copy of the GNU General Public License version
+ * 2 along with this work; if not, write to the Free Software Foundation,
+ * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+ *
+ * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+ * or visit www.oracle.com if you need additional information or have any
+ * questions.
+ */
+
+package org.sample;
+
+import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.infra.Blackhole;
+import org.openjdk.jmh.runner.Runner;
+import org.openjdk.jmh.runner.RunnerException;
+import org.openjdk.jmh.runner.options.Options;
+import org.openjdk.jmh.runner.options.OptionsBuilder;
+
+import java.util.Random;
+import java.util.concurrent.TimeUnit;
+
+//执行5轮预热，每次持续1秒
+@Warmup(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)
+//执行一次测试
+//显示平均时间，单位纳秒
+@BenchmarkMode(Mode.AverageTime)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
+@Measurement(iterations = 3,time = 1,timeUnit = TimeUnit.SECONDS)
+@State(Scope.Benchmark)
+public class EscapeAnalysisBenchmark2 {
+
+    public int test(){
+        int count = 0;
+        for (int i = 0; i < 10000000; i++) {
+            Point point = new Point();
+            point.test();
+        }
+        return count;
+    }
+
+    @Benchmark
+    @Fork(value = 1,jvmArgsAppend = {"-Xmx10m"})
+    public void testWithJIT(Blackhole blackhole) {
+        int i = test();
+        blackhole.consume(i);
+    }
+
+    @Benchmark
+    @Fork(value = 1,jvmArgsAppend = {"-XX:-DoEscapeAnalysis","-Xmx10m"})
+    public void testWithoutEA(Blackhole blackhole) {
+        int i = test();
+        blackhole.consume(i);
+    }
+
+    @Benchmark
+    @Fork(value = 1,jvmArgsAppend = {"-Xint","-Xmx10m"})
+    public void testWithoutJIT(Blackhole blackhole) {
+        int i = test();
+        blackhole.consume(i);
+    }
+
+        public static void main(String[] args) throws RunnerException {
+        Options opt = new OptionsBuilder()
+                .include(EscapeAnalysisBenchmark2.class.getSimpleName())
+                .forks(1)
+                .build();
+
+        new Runner(opt).run();
+    }
+
+}
+
+
+class Point{
+    private int x;
+    private int y;
+
+    public void test(){
+        x = 1;
+        y = 2;
+        int z = x++;
+    }
+}
+```
+
+测试结果：
+
+![img](./assets/1734434577820-93.png)
+
+性能最高的是JIT功能全开的情况下；不开启逃逸分析，虽然方法内联还生效，但是性能要差很多；完全不开性能就特别差了。
+
+##### 案例：使用JIT Watch工具查看逃逸分析的优化结果需求：
+
+1、在JIT Watch中创建新的文件，将之前准备好的代码复制进去。
+
+2、观察创建对象这一行源代码的字节码信息。
+
+3、对象没有逃离方法的作用域，可以标量替换等方式进行优化。
+
+![img](./assets/1734434577820-94.png)
+
+### 总结
+
+根据JIT即时编器优化代码的特性，在编写代码时注意以下几个事项，可以让代码执行时拥有更好的性能：
+
+1、尽量编写比较小的方法，让方法内联可以生效。
+
+2、高频使用的代码，特别是第三方依赖库甚至是JDK中的，如果内容过度复杂是无法内联的，可以自行实现一个特定的优化版本。
+
+3、注意下接口的实现数量，尽量不要超过2个，否则会影响内联的处理。
+
+4、高频调用的方法中创建对象临时使用，尽量不要让对象逃逸。
+
+## 6、垃圾回收器原理
+
+### 6.1 G1垃圾回收器原理
+
+G1垃圾回收有两种方式：
+
+1、年轻代回收（Young GC）
+
+2、混合回收（Mixed GC）
+
+年轻代回收
+
+年轻代回收只扫描年轻代对象（Eden + Survivor），所以从GC Root到年轻代的对象或者年轻代对象引用了其他年轻代的对象都很容易扫描出来。
+
+![img](./assets/1734434577820-95.png)
+
+这里就存在一个问题，年轻代回收只扫描年轻代对象（Eden + Survivor），如果有老年代中的对象引用了年轻代中的对象，我们又如何知道呢？
+
+![img](./assets/1734434577820-96.png)
+
+比如上图中，E对象被对象引用了，那么显然在垃圾回收时E对象是不应该被回收的。
+
+**方案1：从GC Root开始，扫描所有对象，如果年轻代对象在引用链上，就标记为存活。**
+
+![img](./assets/1734434577820-97.png)
+
+重新扫描一遍GC Root关联的所有对象，包括老年代的。这个方案显然不可行，需要遍历引用链上所有对象，效率太低。
+
+**方案2：维护一个详细的表，记录哪个对象被哪个老年代引用了。在年轻代中被引用的对象，不进行回收。**
+
+![img](./assets/1734434577820-98.png)
+
+如上图中，通过引用详情表记录F和E对象分别被A和B对象引用了。问题：如果对象太多这张表会占用很大的内存空间。存在错标的情况
+
+方案2的第一次优化：只记录Region被哪些对象引用了。这种引用详情表称为记忆集 RememberedSet（简称RS或RSet）：是一种记录了从非收集区域对象引用收集区域对象的这些关系的数据结构。扫描时将记忆集中的对象也加入到GC Root中，就可以根据引用链判断哪些对象需要回收了。
+
+问题：如果区域中引用对象很多，还是占用很多内存。
+
+![img](./assets/1734434577820-99.png)
+
+方案2的第二次优化：将所有区域中的内存按一定大小划分成很多个块，每个块进行编号。记忆集中只记录对块的引用关系。如果一个块中有多个对象，只需要引用一次，减少了内存开销。
+
+![img](./assets/1734434577821-100.png)
+
+每一个Region都拥有一个自己的卡表，如果产生了跨代引用（老年代引用年轻代），此时这个Region对应的卡表上就会将字节内容进行修改,JDK8源码中0代表被引用了称为脏卡。这样就可以标记出当前Region被老年代中的哪些部分引用了。那么要生成记忆集就比较简单了，只需要遍历整个卡表，找到所有脏卡。
+
+![img](./assets/1734434577821-101.png)
+
+那么怎么样去维护这个卡表呢？或者说怎么知道A对F引用了？
+
+JVM使用写屏障（Write Barrier）技术，在执行引用关系建立的代码时，可以在代码前和代码后插入一段指令，从而维护卡表。
+
+记忆集中不会记录新生代到新生代的引用，同一个Region中的引用也不会记录。
+
+![img](./assets/1734434577821-102.png)
+
+记忆集的生成流程分为以下几个步骤：
+
+1、通过写屏障获得引用变更的信息。
+
+2、将引用关系记录到卡表中，并记录到一个脏卡队列中。
+
+3、JVM中会由Refinement 线程定期从脏卡队列中获取数据，生成记忆集。不直接写入记忆集的原因是避免过多线程并发访问记忆集。
+
+![img](./assets/1734434577821-103.png)
+
+#### 执行流程：
+
+更详细的分析下年轻代回收的步骤，整个过程是STW的：
+
+1、Root扫描，将所有的静态变量、局部变量扫描出来。
+
+2、处理脏卡队列中的没有处理完的信息，更新记忆集的数据，此阶段完成后，记忆集中包含了所有老年代对当前Region的引用关系。
+
+![img](./assets/1734434577821-104.png)
+
+3、标记存活对象。记忆集中的对象会加入到GC Root对象集合中，在GC Root引用链上的对象也会被标记为存活对象。
+
+4、根据设定的最大停顿时间，选择本次收集的区域，称之为回收集合Collection Set。
+
+![img](./assets/1734434577821-105.png)
+
+5、复制对象：将标记出来的对象复制到新的区中，将年龄加1，如果年龄到达15则晋升到老年代。老的区域内存直接清空。
+
+6、处理软、弱、虚、终结器引用，以及JNI中的弱引用。
+
+![img](./assets/1734434577821-106.png)
+
+**G1年轻代回收核心技术**
+
+**1、卡表 Card Table**
+
+每一个Region都拥有一个自己的卡表，卡表是一个字节数组，如果产生了跨代引用（老年代引用年轻代），G1会将卡表上引用对象所在的位置字节内容进行修改为0, 称为脏卡。卡表的主要作用是生成记忆集。
+
+卡表会占用一定的内存空间，堆大小是1G时，卡表大小为1G = 1024 MB / 512 = 2MB
+
+**2、记忆集 RememberedSet（简称RS或RSet）**
+
+每一个Region都拥有一个自己的记忆集，如果产生了跨代引用，记忆集中会记录引用对象所在的卡表位置。标记阶段将记忆集中的对象加入GC ROOT集合中一起扫描，就可以将被引用的对象标记为存活。
+
+**3、写屏障 Write Barrier**
+
+G1使用写屏障技术，在执行引用关系建立的代码执行后插入一段指令，完成卡表的维护工作。
+
+会损失一部分的性能，大约在5%~10%之间。
+
+混合回收
+
+多次回收之后，会出现很多Old老年代区，此时总堆占有率达到阈值（默认45%）时会触发混合回收MixedGC。
+
+混合回收会由年轻代回收之后或者大对象分配之后触发，混合回收会回收 整个年轻代 + 部分老年代。
+
+老年代很多时候会有大量对象，要标记出所有存活对象耗时较长，所以整个标记过程要尽量能做到和用户线程并行执行。
+
+**混合回收的步骤：**
+
+1、初始标记，STW，采用三色标记法标记从GC Root可直达的对象。
+
+2、并发标记，并发执行，对存活对象进行标记。
+
+3、最终标记，STW，处理SATB相关的对象标记。
+
+4、清理，STW，如果区域中没有任何存活对象就直接清理。
+
+5、转移，将存活对象复制到别的区域。
+
+#### 初始标记
+
+初始标记会暂停所有用户线程，只标记从GC Root可直达的对象，所以停顿时间不会太长。采用三色标记法进行标记，三色标记法在原有双色标记（黑也就是1代表存活，白0代表可回收）增加了一种灰色，采用队列的方式保存标记为灰色的对象。
+
+黑色：存活，当前对象在GC Root引用链上，同时他引用的其他对象也都已经标记完成。
+
+灰色：待处理，当前对象在GC Root引用链上，他引用的其他对象还未标记完成。
+
+白色：可回收，不在GC Root引用链上。
+
+初始所有对象都是默认为白色，初始值为0：
+
+![img](./assets/1734434577821-107.png)
+
+三色标记中的黑色和白色是使用位图(bitmap)来实现的,比如8个字节使用1个bit来标识标记的内容，黑色为1，白色为0，灰色不会体现在位图中，会单独放入一个队列中。如果对象超过8个字节，仅仅使用第一个bit位处理。
+
+![img](./assets/1734434577821-108.png)
+
+将GC Root可以直到的对象D标记，D没有其他引用对象，所以直接标记为为黑色：
+
+![img](./assets/1734434577821-109.png)
+
+接下来将B对象标记，由于B关联了A和C，而A和C没有标记完成，所以B是待处理状态，将B送入灰色队列。
+
+![img](./assets/1734434577821-110.png)
+
+并发标记
+
+接下来进入并发标记阶段，继续进行未完成的标记任务。此阶段和用户线程并发执行。
+
+从灰色队列中获取尚未完成标记的对象B。标记B关联的A和C对象，由于A和C对象并未引用其他对象，可以直接标记成黑色，而B也完成了所有引用对象的标记，也标记为黑色。
+
+最后从队列获取C对象，标记为黑色，E也标记为黑色。所以剩余对象F就是白色，可回收。
+
+![img](./assets/1734434577821-111.png)
+
+最后从队列获取C对象，标记为黑色，E也标记为黑色。所以剩余对象F就是白色，可回收。
+
+![img](./assets/1734434577821-112.png)
+
+三色标记存在一个比较严重的问题，由于用户线程可能同时在修改对象的引用关系，就会出现错标的情况，比如：
+
+这个案例中正常情况下，B和C都会被标记成黑色。但是在BC标记前，用户线程执行了 B.c = null；将B到C的引用去除了。
+
+![img](./assets/1734434577821-113.png)
+
+同时执行了A.c = c; 添加了A到C的引用。此时会出现严重问题，C是白色可回收一旦回收代码中再去使用对象会造成重大问题。
+
+![img](./assets/1734434577821-114.png)
+
+如果接着处理B：
+
+![img](./assets/1734434577821-115.png)
+
+B在GC引用链上，没有引用任何对象，所以B标记为黑色：
+
+![img](./assets/1734434577821-116.png)
+
+这样C虽然在引用链上，但是被回收了。
+
+G1为了解决这个问题，使用了**SATB技术（Snapshot At The Beginning， 初始快照）**。SATB技术是这样处理的：
+
+![img](./assets/1734434577821-117.png)
+
+1、标记开始时创建一个快照，记录当前所有对象，标记过程中新生成的对象直接标记为黑色。
+
+![img](./assets/1734434577821-118.png)
+
+2、采用前置写屏障技术，在引用赋值前比如B.c = null之前，将之前引用的对象c放入SATB待处理队列中。SATB队列每个线程都有一个，最终会汇总到一个大的SATB队列中。
+
+![img](./assets/1734434577821-119.png)
+
+最终队列处理完之后，C和F就可以完成标记了。
+
+![img](./assets/1734434577821-120.png)
+
+SATB的缺点是在本轮清理时可能会将不存活的对象标记成存活对象，产生了一些所谓的浮动垃圾，等到下一轮清理时才能回收。比如图中的E对象。
+
+**SATB练习题**
+
+![img](./assets/1734434577821-121.png)
+
+C和E对象会被加入SATB队列中，最终被标记为存活。
+
+![img](./assets/1734434577822-122.png)
+
+转移的步骤如下:
+
+1、根据最终标记的结果，可以计算出每一个区域的垃圾对象占用内存大小，根据停顿时间，选择转移效率最高（垃圾对象最多）的几个区域。
+
+2、转移时先转移GC Root直接引用的对象，然后再转移其他对象。
+
+![img](./assets/1734434577822-123.png)
+
+先转移A对象：
+
+![img](./assets/1734434577822-124.png)
+
+接下来转移B对象：
+
+![img](./assets/1734434577822-125.png)
+
+3、回收老的区域，如果外部有其他区域对象引用了转移对象，也需要重新设置引用关系。
+
+![img](./assets/1734434577822-126.png)
+
+多次回收之后，会出现很多Old老年代区，此时总堆占有率达到阈值（默认45%）时会触发混合回收MixedGC。
+
+混合回收会由年轻代回收之后或者大对象分配之后触发，混合回收会回收 整个年轻代 + 部分老年代。
+
+老年代很多时候会有大量对象，要标记出所有存活对象耗时较长，所以整个标记过程要尽量能做到和用户线程并行执行。
+
+混合回收的步骤：
+
+1、初始标记，STW，采用三色标记法标记从GC Root可直达的对象。
+
+2、并发标记，并发执行，对存活对象进行标记。
+
+3、最终标记，STW，处理SATB相关的对象标记。
+
+4、清理，STW，如果区域中没有任何存活对象就直接清理。
+
+5、转移，将存活对象复制到别的区域。
+
+### 6.2 ZGC原理
+
+ZGC 是一种可扩展的低延迟垃圾回收器。ZGC 在垃圾回收过程中，STW的时间不会超过一毫秒，适合需要低延迟的应用。支持几百兆到16TB 的堆大小，堆大小对STW的时间基本没有影响。 
+
+在G1垃圾回收器中，STW时间的主要来源是在转移阶段：
+
+1、初始标记，STW，采用三色标记法标记从GC Root可直达的对象。 STW时间极短
+
+2、并发标记，并发执行，对存活对象进行标记。
+
+3、最终标记，STW，处理SATB相关的对象标记。  STW时间极短
+
+4、清理，STW，如果区域中没有任何存活对象就直接清理。 STW时间极短5、转移，将存活对象复制到别的区域。  STW时间较长
+
+![img](./assets/1734434577822-127.png)
+
+#### G1转移时需要停顿的主要原因
+
+在转移时，能不能让用户线程和GC线程同时工作呢？考虑下面的问题：
+
+转移完之后，需要将A对对象的引用更改为新对象的引用。但是在更改前，执行A.c.count = 2，此时更改的是转移前对象中的属性
+
+![img](./assets/1734434577822-128.png)
+
+更改引用之后, A引用了转移之后的对象，此时获取A.c.count发现属性值依然是1。这样就产生了问题，所以G1为了解决问题，在转移过程中需要进行用户线程的停止。ZGC和Shenandoah解决了这个问题，让转移过程也能够并发执行。
+
+![img](./assets/1734434577822-129.png)
+
+在ZGC中，使用了读屏障Load Barrier技术，来实现转移后对象的获取。当获取一个对象引用时，会触发读后的屏障指令，如果对象指向的不是转移后的对象，用户线程会将引用指向转移后的对象。
+
+f变量一开始指向转移前的对象：
+
+![img](./assets/1734434577822-130.png)
+
+通过读后屏障指令，判断如果是转移前的对象，就改写指针内容，指向转移后的对象。
+
+![img](./assets/1734434577822-131.png)
+
+这样对f.count进行赋值操作，操作的就是转移后的对象了：
+
+![img](./assets/1734434577822-132.png)
+
+那么ZGC是如何判断对象是转移前还是转移后的呢？它主要使用了着色指针（Colored Pointers）。
+
+#### 着色指针（Colored Pointers）
+
+着色指针将原来的8字节保存地址的指针拆分成了三部分：
+
+1、最低的44位，用于表示对象的地址，所以最多能表示16TB的内存空间。
+
+2、中间4位是颜色位，每一位只能存放0或者1，并且同一时间只有其中一位是1。
+
+终结位：只能通过终结器访问
+
+重映射位(Remap)：转移完之后，对象的引用关系已经完成变更。
+
+Marked0和Marked1：标记可达对象
+
+3、16位未使用
+
+![img](./assets/1734434577822-133.png)
+
+访问对象引用时，使用的是对象的地址。在64位虚拟机中，是8个字节可以表示接近无限的内存空间。所以一般内存中对象，高几位都是0没有使用。着色指针就是利用了这多余的几位，存储了状态信息。
+
+![img](./assets/1734434577822-134.png)
+
+正常应用程序使用8个字节去进行对象的访问，现在只使用了44位，不会产生问题吗？
+
+应用程序使用的对象地址，只是虚拟内存，操作系统会将虚拟内存转换成物理内存。而ZGC通过操作系统更改了这层逻辑。所以不管颜色位变成多少，指针指向的都是同一个对象。
+
+![img](./assets/1734434577822-135.png)
+
+在ZGC中，与G1垃圾回收器一样将堆内存划分成很多个区域，这些内存区域被称之为Zpage。
+
+Zpage分成三类大中小，管控粒度比G1更细，这样更容易去控制停顿时间。
+
+小区域：2M，只能保存256KB内的对象。
+
+中区域：32M，保存256KB – 4M的对象。
+
+大区域：只保存一个大于4M的对象。
+
+#### 初始标记阶段
+
+标记Gc Roots引用的对象为存活对象数量不多，所以停顿时间非常短。
+
+初始阶段会标记GC Roots直接关联的对象，对引用这些对象的指针上的marked0位标记为1：
+
+![img](./assets/1734434577822-136.png)
+
+#### 并发标记阶段
+
+遍历所有对象，标记可以到达的每一个对象是否存活，用户线程使用读屏障，如果发现对象没有完成标记也会帮忙进行标记。
+
+![img](./assets/1734434577822-137.png)
+
+#### 并发处理阶段
+
+选择需要转移的Zpage，并创建转移表，用于记录转移前对象和转移后对象地址。
+
+![img](./assets/1734434577822-138.png)
+
+#### 转移开始阶段
+
+转移GC Root直接关联的对象，不转移的对象remapped值设置成1，避免重复进行判断。
+
+如下1和2不转移，将remapped置为1：
+
+![img](./assets/1734434577822-139.png)
+
+接下来开始转移：
+
+![img](./assets/1734434577822-140.png)
+
+#### 并发转移阶段
+
+将剩余对象转移到新的ZPage中，转移之后将两个对象的地址记入转移映射表。
+
+![img](./assets/1734434577822-141.png)
+
+转移完之后，转移前的Zpage就可以清空了，转移表需要保留下来。
+
+![img](./assets/1734434577822-142.png)
+
+此时，如果用户线程访问4对象引用的5对象，会通过读屏障，将4对5的引用进行重置，修改为对5的引用，同时将remap标记为1代表已经重新映射完成。
+
+![img](./assets/1734434577822-143.png)
+
+并发转移阶段结束之后，这一轮的垃圾回收就结束了，但其实并没有完成所有指针的重映射工作，这个工作会放到下一阶段，与下一阶段的标记阶段一起完成（因为都需要遍历整个对象图）。
+
+![img](./assets/1734434577823-144.png)
+
+#### 第二次垃圾回收的初始标记阶段
+
+第二次垃圾回收的初始标记阶段，沿着GC Root标记对象。这一次会使用marked1，因为marked0是上一次垃圾回收了。这样可以很容易区分出是这一次垃圾回收的标记阶段还是上一次垃圾回收的。
+
+![img](./assets/1734434577823-145.png)
+
+如果Marked0为1代表上一轮的重映射还没有完成，先完成重映射从转移表中找到老对象转移后的新对象，再进行标记。如果Remap为1，只需要进行标记。
+
+![img](./assets/1734434577823-146.png)
+
+将转移映射表删除，释放内存空间。
+
+![img](./assets/1734434577823-147.png)
+
+#### 并发问题
+
+如果用户线程在帮忙转移时，GC线程也发现这个对象需要复制，那么就会去尝试写入转移映射表，如果发现映射表中已经有相同的老对象，直接放弃。
+
+![img](./assets/1734434577823-148.png)
+
+#### 分代ZGC的设计
+
+在JDK21之后，ZGC设计了年轻代和老年代，这样可以让大部分对象在年轻代回收，减少老年代的扫描次数，同样可以提升一定的性能。同时，年轻代和老年代的垃圾回收可以并行执行。
+
+![img](./assets/1734434577823-149.png)
+
+分代之后的着色指针将原来的8字节保存地址的指针拆分成了三部分：
+
+1、46位用来表示对象地址，最多可以表示64TB的地址空间。
+
+2、中间的12位为颜色位。
+
+3、最低4位和最高2位未使用
+
+整个分代之后的读写屏障、着色指针的移位使用都变的异常复杂，仅作了解即可。
+
+![img](./assets/1734434577823-150.png)
+
+#### 总结 - ZGC核心技术：
+
+1、着色指针(Colored Pointers）
+
+着色指针将原来的8字节保存地址的指针拆分成了三部分，不仅能保存对象的地址，还可以保存当前对象所属的状态。
+
+不支持32位系统、不支持指针压缩
+
+2、读屏障（Load Barrier）
+
+在获取对象引用判断对象所属状态，如果所属状态和当前GC阶段的颜色状态不一致，由用户线程完成本阶段的工作。
+
+会损失一部分的性能，大约在5%~10%之间。
+
+### 6.3 ShenandoahGC原理
+
+ShenandoahGC和ZGC不同， ShenandoahGC很多是使用了G1源代码改造而成，所以在很多算法、数据结构的定义上，与G1十分相像，而ZGC是完全重新开发的一套内容。
+
+1、ShenandoahGC的区域定义与G1是一样的。
+
+2、没有着色指针，通过修改对象头的设计来完成并发转移过程的实现。
+
+3、ShenandoahGC有两个版本，1.0版本存在于JDK8和JDK11中，后续的JDK版本中均使用2.0版本。
+
+#### 1.0版本
+
+![img](./assets/1734434577823-151.png)
+
+如果转移阶段未完成，此时转移前的对象和转移后的对象都会存活。如果用户去访问数据，需要使用转移后的数据。 ShenandoahGC使用了读前屏障，根据对象的前向指针来获取到转移后的对象并读取。
+
+![img](./assets/1734434577823-152.png)
+
+写入数据时会使用写前屏障，判断Mark Word中的GC状态，如果GC状态为0证明没有处于GC过程中，直接写入，如果不为0则根据GC状态值确认当前处于垃圾回收的哪个阶段，让用户线程执行垃圾回收相关的任务。
+
+![img](./assets/1734434577823-153.png)
+
+1.0版本的缺点：
+
+1、对象内存大大增加，每个对象都需要增加8个字节的前向指针，基本上会占用5% - 10%的空间。
+
+2、读屏障中加入了复杂的指令，影响使用效率。
+
+#### 2.0版本
+
+2.0版本优化了前向指针的位置，仅转移阶段将其放入了Mark Word中。
+
+![img](./assets/1734434577823-154.png)
+
+#### ShenandoahGC的执行流程
+
+![img](./assets/1734434577823-155.png)
+
+#### 并发转移阶段 – 并发问题
+
+如果用户线程在帮忙转移时，ShenandoahGC线程也发现这个对象需要复制，那么就会去尝试写入前向指针，使用了类似CAS的方式来实现，只有一个线程能成功修改，其他线程会放弃转移的操作。
+
+![img](./assets/1734434577823-156.png)
+
+
+
+# 面试篇
+
+![面试](./assets/面试.png)
+
+## 什么是JVM？
+
+- 关联课程内容
+  - 基础篇-初识JVM
+  - 基础篇-Java虚拟机的组成
+
+- 回答路径
+  - JVM的定义
+  - 作用
+  - 功能
+  - 组成
+
+### 1、定义：
+
+JVM 指的是Java虚拟机（ Java Virtual Machine ）。JVM 本质上是一个运行在计算机上的程序，他的职责是运行Java字节码文件，Java虚拟机上可以运行Java、Kotlin、Scala、Groovy等语言。
+
+启动这个程序：
+
+```Java
+package q1jvm;
+
+import java.io.IOException;
+
+//用java命令启动一个jvm进程，执行程序
+public class C01JVM {
+    public static void main(String[] args) throws IOException {
+        System.in.read();
+    }
+}
+```
+
+![img](./assets/1734447629441-472.png)
+
+任务管理器中启动的Java进程，其实是一个虚拟机进程，它会执行我们编写好的代码。
+
+通过`jps`命令也可以看到java进程，`jps`是JDK自带的一共显示Java进程的小工具：
+
+![img](./assets/1734447629441-473.png)
+
+只要能编译成Java字节码文件的语言，Java虚拟机都可以运行。下图是Groovy语言在Java虚拟机上成功运行的结果：
+
+![img](./assets/1734447629441-474.png)
+
+### 2、作用：
+
+为了支持Java中Write Once，Run Anywhere；编写一次，到处运行的跨平台特性。
+
+![img](./assets/1734447629441-475.png)
+
+对于C/C++这类语言来说，需要将源代码编译成对应平台（不同的操作系统+CPU架构)的机器码，才能让计算机运行。不满足一次编译，到处运行的跨平台特性。
+
+![img](./assets/1734447629441-476.png)
+
+但是Java语言不同，Java语言将源代码编译成字节码文件之后，就可以交由不同平台下已经安装好的Java虚拟机。Java虚拟机会将字节码指令实时解释成机器码。这样就满足了一次编译（编译成字节码），到处运行的跨平台特性。
+
+![img](./assets/1734447629441-477.png)
+
+### 3、功能
+
+- 解释和运行，对字节码文件中的指令，实时的解释成机器码，让计算机执行。
+- 内存管理，自动为对象、方法等分配内存，自动的垃圾回收机制，回收不再使用的对象。
+- 即时编译，对热点代码进行优化，提升执行效率。
+
+执行以下代码：
+
+```Java
+package q1jvm;
+
+//-Xint 禁止JIT即时编译器优化
+public class C03Usage {
+    public static void main(String[] args) {
+        long start = System.currentTimeMillis();
+
+        C03Usage test = new C03Usage();
+        test.jitTest();
+
+        long end = System.currentTimeMillis();
+        System.out.println("执行耗时:" + (end - start) + "ms");
+    }
+
+    public int add (int a,int b){
+        return a + b;
+    }
+
+    public int jitTest(){
+        int sum = 0;
+        for (int i = 0; i < 10000000; i++) {
+            sum = add(sum,100);
+        }
+        return sum;
+    }
+}
+```
+
+加上JIT即时编译优化之后，代码执行只需要3ms。但是如果加上`-Xint`参数关闭即时编译器优化，执行时间需要233ms。
+
+### 4、组成
+
+![img](./assets/1734447629441-478.png)
+
+- 编译器：不属于Java虚拟机的一部分，负责将源代码文件编译成字节码文件。
+- 类加载子系统，负责将字节码文件读取、解析并保存到内存中。其核心就是类加载器。
+- 运行时数据区，管理JVM使用到的内存。
+- 执行引用，分为解释器 解释执行字节码指令；即时编译器 优化代码执行性能； 垃圾回收器 将不再使用的对象进行回收。
+- 本地接口，保存了本地已经编译好的方法，使用C/C++语言实现。
+
+### 5、常见的JVM
+
+![img](./assets/1734447629441-479.png)
+
+### 总结
+
+1、JVM 指的是Java虚拟机，本质上是一个运行在计算机上的程序，他的职责是运行Java字节码文件，作用是为了支持跨平台特性。
+
+2、JVM的功能有三项：第一是解释执行字节码指令；第二是管理内存中对象的分配，完成自动的垃圾回收；第三是优化热点代码提升执行效率。
+
+3、JVM组成分为类加载子系统、运行时数据区、执行引擎、本地接口这四部分。
+
+4、常用的JVM是Oracle提供的Hotspot虚拟机，也可以选择GraalVM、龙井、OpenJ9等虚拟机。
+
+## 了解过字节码文件的组成吗？
+
+- 关联课程内容
+  - 基础篇-字节码文件的组成
+  - 基础篇-字节码文件的工具
+
+- 回答路径
+  - 查看字节码文件常用工具
+  - 字节码文件的组成
+  - 应用场景：工作中一般不直接查看字节码文件，深入学习JVM的基础
+
+字节码文件本质上是一个二进制的文件，无法直接用记事本等工具打开阅读其内容。需要通过专业的工具打开。
+
+- 开发环境使用jclasslib插件
+- 服务器环境使用javap –v命令
+
+### 1、基本信息
+
+魔数、字节码文件对应的Java版本号、访问标识(public final等等)、父类和接口。
+
+类代码:
+
+```Java
+package q2class;
+
+public class MyClass extends MyParent implements MyInterface{
+
+    private int i = 0;
+
+    @Override
+    public void test() {
+        int j = 0;
+        j++;
+    }
+
+    public static void main(String[] args) {
+        new MyClass();
+    }
+}
+```
+
+父类代码:
+
+```Java
+package q2class;
+
+public class MyParent {
+}
+```
+
+接口代码:
+
+```Java
+package q2class;
+
+public interface MyInterface {
+    void test();
+}
+```
+
+编译之后用notepad++打开：
+
+![img](./assets/1734447629441-480.png)
+
+魔数前四个字节是固定的内容0xcafebabe，只有前四个字节满足这个内容才是字节码文件。
+
+使用jclasslib查看到基本信息：
+
+![img](./assets/1734447629441-481.png)
+
+如果在服务器上，可以通过`javap -v`命令打开字节码文件查看内容：
+
+![img](./assets/1734447629441-482.png)
+
+结果：
+
+![img](./assets/1734447629441-483.png)
+
+### 2、常量池
+
+保存了字符串常量、类或接口名、字段名，主要在字节码指令中使用。
+
+常量池是一个数组，比如这个序号为10的常量就是一个UTF8的字符串。保存了MyClass的全限定名。
+
+![img](./assets/1734447629441-484.png)
+
+### 3、字段
+
+当前类或接口声明的字段信息
+
+字段里保存的是名字、描述符（字段类型）、访问标识。其中名字和描述符都指向常量池中的内容。
+
+![img](./assets/1734447629441-485.png)
+
+### 4、方法
+
+当前类或接口声明的方法信息、字节码指令。
+
+方法中保存了方法名、描述符（参数和返回值）、访问标识。
+
+![img](./assets/1734447629441-486.png)
+
+还有字节码指令，代码编译后就变成了字节码指令：
+
+![img](./assets/1734447629441-487.png)
+
+### 5、属性
+
+类的属性，比如源码的文件名、内部类的列表等。
+
+![img](./assets/1734447629441-488.png)
+
+## 说一下运行时数据区
+
+- 关联课程内容
+  - 基础篇-程序计数器
+  - 基础篇-栈
+  - 基础篇-堆
+  - 基础篇-方法区
+  - 基础篇-直接内存
+
+- 回答路径
+  - 程序计数器
+  - 栈
+  - 堆
+  - 方法区
+  -  直接内存（可选）
+
+  - 
+
+  -  运行时数据区指的是JVM所管理的内存区域，其中分成两大类：
+
+  -  线程共享 – 方法区、堆     线程不共享 – 本地方法栈、虚拟机栈、程序计数器
+
+  -  直接内存主要是NIO使用，由操作系统直接管理，不属于JVM内存。
+
+  - ![img](./assets/1734447629441-489.png)
+
+### 程序计数器
+
+程序计数器（Program Counter Register）也叫PC寄存器，每个线程会通过程序计数器记录当前要执行的的字节码指令的地址。主要有两个作用：
+
+1、程序计数器可以控制程序指令的进行，实现分支、跳转、异常等逻辑。
+
+![img](./assets/1734447629441-490.png)
+
+2、在多线程执行情况下，Java虚拟机需要通过程序计数器记录CPU切换前解释执行到那一句指令并继续解释运行。
+
+![img](./assets/1734447629441-491.png)
+
+### 栈 - Java虚拟机栈
+
+Java虚拟机栈采用栈的数据结构来管理方法调用中的基本数据，先进后出 ,每一个方法的调用使用一个栈帧来保存。每个线程都会包含一个自己的虚拟机栈，它的生命周期和线程相同。
+
+![img](./assets/1734447629441-492.png)
+
+栈帧主要包含三部分内容：
+
+1、局部变量表，在方法执行过程中存放所有的局部变量。
+
+![img](./assets/1734447629442-493.png)
+
+2、操作数栈，虚拟机在执行指令过程中用来存放临时数据的一块区域。
+
+如下图中，iadd指令会将操作数栈上的两个数相加，为了实现`i+1`。最终结果也会放到操作数上。
+
+![img](./assets/1734447629442-494.png)
+
+3、帧数据，主要包含动态链接、方法出口、异常表等内容。
+
+动态链接：方法中要用到其他类的属性和方法，这些内容在字节码文件中是以编号保存的，运行过程中需要替换成内存中的地址，这个编号到内存地址的映射关系就保存在动态链接中。
+
+方法出口：方法调用完需要弹出栈帧，回到上一个方法，程序计数器要切换到上一个方法的地址继续执行，方法出口保存的就是这个地址。
+
+异常表：存放的是代码中异常的处理信息，包含了异常捕获的生效范围以及异常发生后跳转到的字节码指令位置。
+
+### 本地方法栈
+
+Java虚拟机栈存储了Java方法调用时的栈帧，而本地方法栈存储的是native本地方法的栈帧。
+
+在Hotspot虚拟机中，Java虚拟机栈和本地方法栈实现上使用了同一个栈空间。本地方法栈会在栈内存上生成一个栈帧，临时保存方法的参数同时方便出现异常时也把本地方法的栈信息打印出来。
+
+![img](./assets/1734447629442-495.png)
+
+### 堆
+
+- 一般Java程序中堆内存是空间最大的一块内存区域。创建出来的对象都存在于堆上。
+- 栈上的局部变量表中，可以存放堆上对象的引用。静态变量也可以存放堆对象的引用，通过静态变量就可以实现对象在线程之间共享。
+- 堆是垃圾回收最主要的部分，堆结构更详细的划分与垃圾回收器有关。
+
+![img](./assets/1734447629442-496.png)
+
+### 方法区
+
+方法区是Java虚拟机规范中提出来的一个虚拟机概念，在HotSpot不同版本中会用永久代或者元空间来实现。方法区主要存放的是基础信息，包含：
+
+1、每一个加载的类的元信息（基础信息）。
+
+![img](./assets/1734447629442-497.png)
+
+2、运行时常量池，保存了字节码文件中的常量池内容，避免常量内容重复创建减少内存开销。
+
+3、字符串常量池，存储字符串的常量。
+
+### 直接内存
+
+直接内存并不在《Java虚拟机规范》中存在，所以并不属于Java运行时的内存区域。在 JDK 1.4 中引入了 NIO 机制，由操作系统直接管理这部分内容，主要为了提升读写数据的性能。在网络编程框架如Netty中被大量使用。
+
+要创建直接内存上的数据，可以使用ByteBuffer。
+
+语法： ByteBuffer directBuffer = ByteBuffer.allocateDirect(size);
+
+### 总结
+
+运行时数据区指的是JVM所管理的内存区域，其中分成两大类：
+
+- 线程共享 方法区、堆 
+
+方法区：存放每一个加载的类的元信息、运行时常量池、字符串常量池。
+
+堆：存放创建出来的对象。
+
+- 线程不共享 – 本地方法栈、虚拟机栈、程序计数器
+
+本地方法栈和虚拟机栈都存放了线程中执行方法时需要使用的基础数据。
+
+程序计数器存放了当前线程执行的字节码指令在内存中的地址。
+
+直接内存主要是NIO使用，由操作系统直接管理，不属于JVM内存。
+
+## 哪些区域会出现内存溢出，会有什么现象？
+
+内存溢出指的是内存中某一块区域的使用量超过了允许使用的最大值，从而使用内存时因空间不足而失败，虚拟机一般会抛出指定的错误。
+
+在Java虚拟机中，只有程序计数器不会出现内存溢出的情况，因为每个线程的程序计数器只保存一个固定长度的地址。
+
+![img](./assets/1734447629442-498.png)
+
+### 堆内存溢出：
+
+堆内存溢出指的是在堆上分配的对象空间超过了堆的最大大小，从而导致的内存溢出。堆的最大大小使用-Xmx参数进行设置，如-Xmx10m代表最大堆内存大小为10m。
+
+```Java
+package q1oom;
+
+import java.io.IOException;
+import java.util.ArrayList;
+
+//-Xmx10m
+public class HeapOOM {
+    public static void main(String[] args) throws InterruptedException, IOException {
+
+        ArrayList<Object> objects = new ArrayList<Object>();
+        while (true){
+            objects.add(new byte[1024 * 1024 * 1]);
+        }
+
+
+    }
+}
+```
+
+溢出之后会抛出OutOfMemoryError，并提示是Java heap Space导致的：
+
+![img](./assets/1734447629442-499.png)
+
+### 栈内存溢出：
+
+栈内存溢出指的是所有栈帧空间的占用内存超过了最大值，最大值使用-Xss进行设置，比如-Xss256k代表所有栈帧占用内存大小加起来不能超过256k。
+
+```Java
+package q1oom;
+
+
+/**
+ * -Xss180k 每个线程栈内存最大180k
+ */
+public class StackOOM {
+    public static void main(String[] args) {
+        recursion();
+    }
+
+    public static int count = 0;
+
+    //递归方法调用自己
+    public static void recursion() {
+        long a,b,c,d,f,g,h,i,j,k;
+        System.out.println(++count);
+        recursion();
+    }
+}
+```
+
+溢出之后会抛出StackOverflowError：
+
+![img](./assets/1734447629442-500.png)
+
+### 方法区内存溢出：
+
+方法区内存溢出指的是方法区中存放的内容比如类的元信息超过了方法区内存的最大值，JDK7及之前版本方法区使用永久代（-XX:MaxPermSize=值）来实现，JDK8及之后使用元空间（-XX:MaxMetaspaceSize=值）来实现。
+
+```Java
+package q1oom;
+
+import net.bytebuddy.jar.asm.ClassWriter;
+import net.bytebuddy.jar.asm.Opcodes;
+
+import java.io.IOException;
+
+/**
+ * JDK8 -XX:MaxMetaspaceSize=20m JDK7 -XX:MaxPermSize=20m
+ */
+public class MethodAreaOOM extends ClassLoader {
+    public static void main(String[] args) throws IOException {
+        MethodAreaOOM demo1 = new MethodAreaOOM();
+        int count = 0;
+        while (true) {
+            String name = "Class" + count;
+            ClassWriter classWriter = new ClassWriter(0);
+            classWriter.visit(Opcodes.V1_7, Opcodes.ACC_PUBLIC, name, null
+                    , "java/lang/Object", null);
+            byte[] bytes = classWriter.toByteArray();
+            demo1.defineClass(name, bytes, 0, bytes.length);
+            System.out.println(++count);
+        }
+    }
+}
+```
+
+元空间溢出：
+
+![img](./assets/1734447629442-501.png)
+
+永久代溢出：
+
+![img](./assets/1734447629442-502.png)
+
+### 直接内存溢出：
+
+直接内存溢出指的是申请的直接内存空间大小超过了最大值，使用 -XX:MaxDirectMemorySize=值 设置最大值。
+
+溢出之后会抛出OutOfMemoryError：
+
+```Java
+package q1oom;
+
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * -XX:MaxDirectMemorySize=50m
+ */
+public class DirectOOM {
+    public static int size = 1024 * 1024 * 100; //100mb
+    public static List<ByteBuffer> list = new ArrayList<ByteBuffer>();
+    public static int count = 0;
+
+    public static void main(String[] args) throws IOException, InterruptedException {
+        while (true) {
+            ByteBuffer directBuffer = ByteBuffer.allocateDirect(size);
+            list.add(directBuffer);
+        }
+
+    }
+}
+```
+
+溢出之后出现：
+
+![img](./assets/1734447629442-503.png)
+
+### 总结：
+
+内存溢出指的是内存中某一块区域的使用量超过了允许使用的最大值，从而使用内存时因空间不足而失败，虚拟机一般会抛出指定的错误。
+
+堆：溢出之后会抛出OutOfMemoryError，并提示是Java heap Space导致的。
+
+栈：溢出之后会抛出StackOverflowError。
+
+方法区：溢出之后会抛出OutOfMemoryError，JDK7及之前提示永久代，JDK8及之后提示元空间。
+
+直接内存：溢出之后会抛出OutOfMemoryError。
+
+## JVM在JDK6-8之间在内存区域上有什么不同 
+
+### 方法区的实现
+
+方法区是《Java虚拟机规范》中设计的虚拟概念，每款Java虚拟机在实现上都各不相同。Hotspot设计如下：
+
+- JDK7及之前的版本将方法区存放在堆区域中的永久代空间，堆的大小由虚拟机参数来控制。
+- JDK8及之后的版本将方法区存放在元空间中，元空间位于操作系统维护的直接内存中，默认情况下只要不超过操作系统承受的上限，可以一直分配。也可以手动设置最大大小。
+
+![img](./assets/1734447629442-504.png)
+
+使用元空间替换永久代的原因：
+
+1、提高内存上限：元空间使用的是操作系统内存，而不是JVM内存。如果不设置上限，只要不超过操作系统内存上限，就可以持续分配。而永久代在堆中，可使用的内存上限是有限的。所以使用元空间可以有效减少OOM情况的出现。
+
+2、优化垃圾回收的策略：永久代在堆上，垃圾回收机制一般使用老年代的垃圾回收方式，不够灵活。使用元空间之后单独设计了一套适合方法区的垃圾回收机制。
+
+### 字符串常量池的位置
+
+![img](./assets/1734447629442-505.png)
+
+字符串常量池从方法区移动到堆的原因：
+
+1、垃圾回收优化：字符串常量池的回收逻辑和对象的回收逻辑类似，内存不足的情况下，如果字符串常量池中的常量不被使用就可以被回收；方法区中的类的元信息回收逻辑更复杂一些。移动到堆之后，就可以利用对象的垃圾回收器，对字符串常量池进行回收。
+
+2、让方法区大小更可控：一般在项目中，类的元信息不会占用特别大的空间，所以会给方法区设置一个比较小的上限。如果字符串常量池在方法区中，会让方法区的空间大小变得不可控。
+
+3、intern方法的优化：JDK6版本中intern () 方法会把第一次遇到的字符串实例复制到永久代的字符串常量池中。JDK7及之后版本中由于字符串常量池在堆上，就可以进行优化：字符串保存在堆上，把字符串的引用放入字符串常量池，减少了复制的操作。
+
+### 总结
+
+![img](./assets/1734447629442-506.png)
+
+![img](./assets/1734447629442-507.png)
+
+![img](./assets/1734447629442-508.png)
+
+## 类的生命周期
+
+- 关联课程内容
+  - 基础篇-类的生命周期-加载阶段
+  - 基础篇-类的生命周期-连接阶段
+  - 基础篇-类的生命周期-初始化阶段
+  - 基础篇-方法区的回收
+
+- 回答路径
+  - 加载
+  - 连接（验证、准备、解析）
+  - 初始化
+  - 卸载
+
+类的生命周期分为以下几个阶段：
+
+![img](./assets/1734447629442-509.png)
+
+### 加载阶段
+
+1、加载(Loading)阶段第一步是类加载器根据类的全限定名通过不同的渠道以二进制流的方式获取字节码信息。
+
+​    程序员可以使用Java代码拓展的不同的渠道。
+
+![img](./assets/1734447629442-510.png)
+
+2、类加载器在加载完类之后，Java虚拟机会将字节码中的信息保存到内存的方法区中。在方法区生成一个InstanceKlass对象，保存类的所有信息。
+
+![img](./assets/1734447629442-511.png)
+
+3、在堆中生成一份与方法区中数据类似的java.lang.Class对象， 作用是在Java代码中去获取类的信息。
+
+![img](./assets/1734447629442-512.png)
+
+比如这段代码中，就会访问堆中的Class对象：
+
+![img](./assets/1734447629442-513.png)
+
+### 连接阶段
+
+连接阶段分为三个小阶段：
+
+![img](./assets/1734447629442-514.png)
+
+连接（Linking）阶段的第一个环节是**验证**，验证的主要目的是检测Java字节码文件是否遵守了《Java虚拟机规范》中的约束。这个阶段一般不需要程序员参与。
+
+主要包含如下四部分，具体详见《Java虚拟机规范》：
+
+1.文件格式验证，比如文件是否以0xCAFEBABE开头，主次版本号是否满足当前Java虚拟机版本要求。
+
+2.元信息验证，例如类必须有父类（super不能为空）。
+
+3.验证程序执行指令的语义，比如方法内的指令执行到一半强行跳转到其他方法中去。
+
+4.符号引用验证，例如是否访问了其他类中private的方法等。
+
+**准备阶段**为静态变量（static）分配内存并设置初值。final修饰的基本数据类型的静态变量，准备阶段直接会将代码中的值进行赋值。
+
+![img](./assets/1734447629442-515.png)
+
+**解析阶段**主要是将常量池中的符号引用替换为直接引用。符号引用就是在字节码文件中使用编号来访问常量池中的内容。直接引用不在使用编号，而是使用内存中地址进行访问具体的数据。
+
+![img](./assets/1734447629442-516.png)
+
+### 初始化阶段
+
+初始化阶段会执行静态代码块中的代码，并为静态变量赋值。
+
+初始化阶段会执行字节码文件中clinit部分的字节码指令。
+
+![img](./assets/1734447629442-517.png)
+
+以如下代码为例：
+
+```Java
+package q3loadclass;
+
+public class Demo1 {
+    public static int value = 1;
+    static {
+        value = 2;
+    }
+    {
+        value = 3;
+    }
+    public static void main(String[] args) {
+        new Demo1();
+        System.out.println(value);
+    }
+}
+```
+
+1.连接的准备阶段value赋初值为0 2.初始化阶段执行clinit方法中的指令,value赋值为2 3.如果创建对象，会执行对象的init方法，value赋值为3 （类中代码块中的内容被放到了构造方法中）
+
+### 卸载阶段
+
+判定一个类可以被卸载。需要同时满足下面三个条件：
+
+1、此类所有实例对象都已经被回收，在堆中不存在任何该类的实例对象以及子类对象。
+
+![img](./assets/1734447629442-518.png)
+
+2、加载该类的类加载器已经被回收。
+
+![img](./assets/1734447629443-519.png)
+
+3、该类对应的 java.lang.Class 对象没有在任何地方被引用。
+
+![img](./assets/1734447629443-520.png)
+
+### 总结
+
+![img](./assets/1734447629443-521.png)
+
+## 什么是类加载器？
+
+- 关联课程内容
+  - 基础篇-类加载器的分类
+  - 基础篇-启动类加载器
+  - 基础篇-扩展和引用程序类加载器
+  - 基础篇-JDK9之后的类加载器
+  - 
+- 回答路径
+  - 类加载器的作用
+  - 启动类加载器
+  - 扩展/平台类加载器
+  - 应用程序类加载器
+  - 自定义类加载器（加分项）
+
+类加载器负载在类的加载过程中将字节码信息以流的方式获取并加载到内存中。JDK8及之前如下：
+
+![img](./assets/1734447629443-522.png)
+
+JDK9之后均由Java实现：
+
+![img](./assets/1734447629443-523.png)
+
+### 启动类加载器
+
+启动类加载器（Bootstrap ClassLoader）是由Hotspot虚拟机提供的类加载器，JDK9之前使用C++编写的、JDK9之后使用Java编写。
+
+默认加载Java安装目录/jre/lib下的类文件，比如rt.jar，tools.jar，resources.jar等。
+
+![img](./assets/1734447629443-524.png)
+
+```Java
+//String类 核心类 由启动类加载器加载，在Java中无法获得启动类加载器
+System.out.println(java.lang.String.class.getClassLoader());
+```
+
+打印结果为:
+
+![img](./assets/1734447629443-525.png)
+
+在Java代码中无法获得启动类加载器。
+
+### 扩展类加载器
+
+扩展类加载器（Extension Class Loader）是JDK中提供的、使用Java编写的类加载器。JDK9之后由于采用了模块化，改名为Platform平台类加载器。
+
+默认加载Java安装目录/jre/lib/ext下的类文件。
+
+![img](./assets/1734447629443-526.png)
+
+```Java
+//nashorn包中的类，使用java script引擎打印Hello World 由扩展类加载器加载
+ScriptEngine engine = new ScriptEngineManager().getEngineByName("nashorn");
+engine.eval("print('Hello World!');");
+System.out.println(ScriptEngineManager.class.getClassLoader());
+```
+
+打印结果（JDK17平台类加载器)：
+
+![img](./assets/1734447629443-527.png)
+
+### 应用程序类加载器
+
+应用程序类加载器（Application Class Loader）是JDK中提供的、使用Java编写的类加载器。默认加载为应用程序classpath下的类。
+
+### 自定义类加载器
+
+自定义类加载器允许用户自行实现类加载的逻辑，可以从网络、数据库等来源加载类信息。自定义类加载器需要继承自ClassLoader抽象类，重写findClass方法。
+
+![img](./assets/1734447629443-528.png)
+
+```Java
+package q4classloader;
+
+import org.apache.commons.io.FileUtils;
+
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.lang.reflect.Field;
+
+//自定义类加载器
+public class MyClassLoader extends ClassLoader{
+
+    @Override
+    protected Class<?> findClass(String name) throws ClassNotFoundException {
+
+        String filename = name.substring(name.lastIndexOf(".") + 1);
+
+        byte[] bytes = new byte[0];
+        try {
+            bytes = FileUtils.readFileToByteArray(new File("D:\\jvm\\data\\" + filename + ".class"));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        //获取字节码信息的二进制数据，调用defineClass方法
+        return defineClass(name, bytes, 0, bytes.length);
+    }
+
+    public static void main(String[] args) throws ClassNotFoundException, InstantiationException, IllegalAccessException {
+
+        MyClassLoader myClassLoader = new MyClassLoader();
+
+        Class<?> clazz = myClassLoader.loadClass("com.itheima.springbootclassfile.pojo.vo.UserVO");
+
+        //打印字段
+        Field[] fields = clazz.getDeclaredFields();
+        for (Field field : fields) {
+            System.out.println(field.getName());
+        }
+
+    }
+}
+```
+
+### 总结：
+
+1.启动类加载器（Bootstrap ClassLoader）加载核心类
+
+2.扩展类加载器（Extension ClassLoader）加载扩展类
+
+3.应用程序类加载器（Application ClassLoader）加载应用classpath中的类
+
+4.自定义类加载器，重写findClass方法。
+
+JDK9及之后扩展类加载器（Extension ClassLoader）变成了平台类加载器（Platform ClassLoader）
+
+## 什么是双亲委派机制
+
+- 关联课程内容
+  - 基础篇-双亲委派机制
+  - 基础篇-打破双亲委派机制
+  - 
+- 回答路径
+  - 类加载器和父类加载器
+  - 什么是双亲委派机制
+  - 双亲委派机制的作用
+  - 
+
+类加载有层级关系，上一级称之为下一级的父类加载器。
+
+![img](./assets/1734447629443-529.png)
+
+测试代码:
+
+```Java
+package q4classloader;
+
+
+
+import javax.script.ScriptEngineManager;
+import javax.script.ScriptException;
+
+public class PrintParentClassLoader {
+    public static void main(String[] args) throws ScriptException {
+        new ScriptEngineManager();
+        //扩展类加载器的父类加载器
+        System.out.println(ScriptEngineManager.class.getClassLoader().getParent());
+        //应用程序类加载器的父类加载器
+        System.out.println(PrintParentClassLoader.class.getClassLoader().getParent());
+        //自定义类加载器的父类加载器
+        System.out.println(new MyClassLoader().getParent());
+    }
+}
+```
+
+打印结果:
+
+![img](./assets/1734447629443-530.png)
+
+- 扩展类加载器的父类加载器但是在java中无法获得，所以打印null
+- 应用程序类加载器的父类加载器是扩展类加载器（平台类加载器）
+- 自定义类加载器的父类加载器是应用程序类加载器
+
+**双亲委派机制指的是：当一个类加载器接收到加载类的任务时，会向上查找是否加载过，再由顶向下进行加载。**
+
+![img](./assets/1734447629443-531.png)
+
+每个类加载器都有一个父类加载器，在类加载的过程中，每个类加载器都会先检查是否已经加载了该类，如果已经加载则直接返回，否则会将加载请求委派给父类加载器。
+
+应用程序类加载器接收到加载类的任务，首先先检查自己有没有加载过：
+
+![img](./assets/1734447629443-532.png)
+
+没有加载过就一层一层向上传递，都检查下自己有没有加载过这个类：
+
+![img](./assets/1734447629443-533.png)
+
+到了启动类加载器发现已经加载过，就返回。
+
+另一个案例：com.itheima.my.C 这个类在当前程序的classpath中，看看是如何加载的。
+
+先由应用程序类加载器检查，发现没有加载过，向上传递检查发现都没有加载过。此时启动类加载器会优先加载：
+
+![img](./assets/1734447629443-534.png)
+
+接下来向下传递加载：
+
+![img](./assets/1734447629443-535.png)
+
+最后由应用程序类加载器加载成功：
+
+![img](./assets/1734447629443-536.png)
+
+### 双亲委派机制有什么用？
+
+1.保证类加载的安全性，通过双亲委派机制避免恶意代码替换JDK中的核心类库，比如java.lang.String，确保核心类库的完整性和安全性。
+
+2.避免重复加载，双亲委派机制可以避免同一个类被多次加载。
+
+### 总结
+
+双亲委派机制指的是：当一个类加载器接收到加载类的任务时，会向上交给父类加载器查找是否加载过，再由顶向下进行加载。
+
+双亲委派机制的作用：保证类加载的安全性，避免重复加载。
+
+![img](./assets/1734447629443-537.png)
+
+## 如何打破双亲委派机制
+
+先了解下双亲委派机制的原理：
+
+![img](./assets/1734447629443-538.png)
+
+调用关系如下：
+
+![img](./assets/1734447629443-539.png)
+
+ClassLoader中包含了4个核心方法，对Java程序员来说，打破双亲委派机制的唯一方法就是实现自定义类加载器重写loadClass方法，将其中的双亲委派机制代码去掉。
+
+![img](./assets/1734447629443-540.png)
+
+打破双亲委派机制的源码：
+
+```Java
+package q4classloader;
+
+import org.apache.commons.io.FileUtils;
+
+import java.io.File;
+import java.io.IOException;
+import java.lang.reflect.Field;
+
+public class ItheimaClassLoader extends ClassLoader{
+
+    @Override
+    public Class<?> loadClass(String name) throws ClassNotFoundException {
+        if(name.startsWith("java.")){
+            return super.loadClass(name);
+        }
+        //com.itheima.springbootclassfile.pojo.vo.UserVO .class
+        String filename = name.substring(name.lastIndexOf(".") + 1) + ".class";
+        //加载 D:/jvm/data
+        byte[] bytes = new byte[0];
+        try {
+            bytes = FileUtils.readFileToByteArray(new File("D:\\教学\\同步课程资料\\BaiduSyncdisk\\实战Java虚拟机\\实战Java虚拟机\\代码\\day12\\jvm-interview\\target\\classes\\q4classloader\\" + filename));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return defineClass(name,bytes,0,bytes.length);
+    }
+
+    public static void main(String[] args) throws ClassNotFoundException {
+        ItheimaClassLoader itheimaClassLoader = new ItheimaClassLoader();
+
+        Class<?> clazz = itheimaClassLoader.loadClass("q4classloader.PrintParentClassLoader");
+
+        //打印类字段
+//        Field[] declaredFields = clazz.getDeclaredFields();
+//        for (Field declaredField : declaredFields) {
+//            System.out.println(declaredField.getName());
+//        }
+
+        //打印类加载器名字
+        System.out.println(clazz.getClassLoader());
+
+    }
+}
+```
+
+### 总结
+
+双亲委派机制指的是：当一个类加载器接收到加载类的任务时，会自底向上交给父类加载器查找是否加载过，再由顶向下进行加载。
+
+双亲委派机制的作用：保证类加载的安全性，避免重复加载。
+
+打破双亲委派机制的方法：实现自定义类加载器，重写loadClass方法，将双亲委派机制的代码去除。
+
+## Tomcat的自定义类加载器
+
+Tomcat中，实现了一套自定义的类加载器。这一小节使用目前应用比较广泛的Tomcat9（9.0.84）源码进行分析。
+
+### 环境搭建：
+
+可以直接运行代码文件夹下的tomcat源码，这个项目已经修改过源码了，但是为了保证将来版本更新后同学们还能搭建最新代码版本的环境，将搭建过程在这里记录一下。
+
+1、打开tomcat找到9.0版本的源代码，下载：
+
+![img](./assets/1734447629443-541.png)
+
+2、使用Idea打开，整个项目没有使用Maven，为了方便进行项目管理。在项目中创建pom文件，内容如下:
+
+```XML
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>org.apache.tomcat</groupId>
+  <artifactId>tomcat</artifactId>
+  <name>tomcat</name>
+  <version>c</version>
+
+  <build>
+    <finalName>tomcat</finalName>
+    <sourceDirectory>java</sourceDirectory>
+    <!--<testSourceDirectory>test</testSourceDirectory>-->
+    <resources>
+      <resource>
+        <directory>java</directory>
+      </resource>
+    </resources>
+    <testResources>
+      <testResource>
+        <directory>test</directory>
+      </testResource>
+    </testResources>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.6.1</version>
+        <configuration>
+          <encoding>UTF-8</encoding>
+          <source>1.8</source>
+          <target>1.8</target>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+  <dependencies>
+    <dependency>
+      <groupId>junit</groupId>
+      <artifactId>junit</artifactId>
+      <version>4.12</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.easymock</groupId>
+      <artifactId>easymock</artifactId>
+      <version>4.0.2</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.ant</groupId>
+      <artifactId>ant</artifactId>
+      <version>1.10.8</version>
+    </dependency>
+    <dependency>
+      <groupId>wsdl4j</groupId>
+      <artifactId>wsdl4j</artifactId>
+      <version>1.6.2</version>
+    </dependency>
+    <dependency>
+      <groupId>javax.xml</groupId>
+      <artifactId>jaxrpc</artifactId>
+      <version>1.1</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.eclipse.jdt.core.compiler</groupId>
+      <artifactId>ecj</artifactId>
+      <version>4.6.1</version>
+    </dependency>
+    <dependency>
+      <groupId>biz.aQute.bnd</groupId>
+      <artifactId>biz.aQute.bndlib</artifactId>
+      <version>5.1.1</version>
+    </dependency>
+
+    <dependency>
+      <groupId>com.unboundid</groupId>
+      <artifactId>unboundid-ldapsdk</artifactId>
+      <version>4.0.13</version>
+      <scope>test</scope>
+    </dependency>
+
+  </dependencies>
+</project>
+```
+
+3、选择Application,添加应用。JDK选择JDK8：
+
+![img](./assets/1734447629443-542.png)
+
+4、添加JVM参数：
+
+```XML
+ -Duser.language=en   -Duser.region=US
+```
+
+5、将JDTCompiler.java中这一段内容报错删除，这里我已经删除了：
+
+![img](./assets/1734447629443-543.png)
+
+6、在StringManager.java中添加这段代码，强制用iso8859-1编码获取字符串。
+
+![img](./assets/1734447629443-544.png)
+
+```Java
+try {
+    value = new String(value.getBytes("iso8859-1"),"utf-8");
+} catch (UnsupportedEncodingException e) {
+    e.printStackTrace();
+}
+```
+
+7、在ContextConfig.java文件中添加JSP初始化器：
+
+![img](./assets/1734447629444-545.png)
+
+```Java
+context.addServletContainerInitializer(new JasperInitializer(),null);
+```
+
+8、将web项目放入webapps目录下，运行项目：
+
+![img](./assets/1734447629444-546.png)
+
+Tomcat类加载器整体结构图如下：
+
+![img](./assets/1734447629444-547.png)
+
+### common类加载器
+
+common类加载器主要加载tomcat自身使用以及应用使用的jar包，默认配置在catalina.properties文件中。
+
+common.loader="${catalina.base}/lib","${catalina.base}/lib/*.jar"
+
+![img](./assets/1734447629444-548.png)
+
+debug调试common累类加载器初始化代码:
+
+![img](./assets/1734447629444-549.png)
+
+它是URLClassLoader类的子类对象，根据URL获取jar包中的class字节码文件。
+
+### catalina类加载器
+
+catalina类加载器主要加载tomcat自身使用的jar包，不让应用使用，默认配置在catalina.properties文件中。
+
+server.loader=     默认配置为空，为空时catalina加载器和common加载器是同一个。
+
+配置参数之前，catalina加载器其实就是common加载器：
+
+![img](./assets/1734447629444-550.png)
+
+配置catalina加载的路径：
+
+![img](./assets/1734447629444-551.png)
+
+这次就创建了一个新的Catalina类加载器，专门加载配置目录下的类：
+
+![img](./assets/1734447629444-552.png)
+
+### shared类加载器
+
+shared类加载器主要加载应用使用的jar包，不让tomcat使用，默认配置在catalina.properties文件中。
+
+shared.loader=     默认配置为空，为空时shared加载器和common加载器是同一个。
+
+![img](./assets/1734447629444-553.png)
+
+### ParallelWebappClassLoader类加载器
+
+ParallelWebappClassLoader类加载器可以多线程并行加载应用中使用到的类，每个应用都拥有一个自己的该类加载器。
+
+demo1项目的类加载器：
+
+![img](./assets/1734447629444-554.png)
+
+demo2的类加载器：
+
+![img](./assets/1734447629444-555.png)
+
+**为什么每个应用会拥有一个独立的ParallelWebappClassLoader类加载器呢？**
+
+同一个类加载器，只能加载一个同名的类。两个应用中相同名称的类都必须要加载。
+
+![img](./assets/1734447629444-556.png)
+
+所以tomcat的做法是为每个应用创建一个web应用类加载器：
+
+![img](./assets/1734447629444-557.png)
+
+**ParallelWebappClassLoader的执行流程：**
+
+![img](./assets/1734447629444-558.png)
+
+默认这里打破了双亲委派机制，应用中的类如果没有加载过。会先从当前类加载器加载，然后再交给父类加载器通过双亲委派机制加载。
+
+![img](./assets/1734447629444-559.png)
+
+### JasperLoader类加载器
+
+JasperLoader类加载器负责加载JSP文件编译出来的class字节码文件，为了实现热部署（不重启让修改的jsp生效），每一个jsp文件都由一个独立的JasperLoader负责加载。
+
+访问一个JSP文件，会触发JasperLoader类加载器的创建：
+
+![img](./assets/1734447629444-560.png)
+
+修改JSP文件：
+
+![img](./assets/1734447629444-561.png)
+
+用Arthas看类加载器情况：
+
+![img](./assets/1734447629444-562.png)
+
+类加载器数量变多了。
+
+### 总结：
+
+![img](./assets/1734447629444-563.png)
+
+## 如何判断堆上的对象没有被引用？？
+
+- 关联课程内容
+  - 基础篇-引用计数法
+  - 基础篇-可达性分析法
+
+- 回答路径
+  - 引用计数法
+  - 可达性分析法
+  - 使用可达性分析法原因
+
+### 引用计数法
+
+引用计数法会为每个对象维护一个引用计数器，当对象被引用时加1，取消引用时减1。
+
+当局部变量对A对象产生引用之后，A的计数器就会加1：
+
+![img](./assets/1734447629444-564.png)
+
+同样，当A对象对B对象产生引用之后，B的计数器会加1：
+
+![img](./assets/1734447629444-565.png)
+
+引用计数法的优点是实现简单，缺点有两点：
+
+1.每次引用和取消引用都需要维护计数器，对系统性能会有一定的影响
+
+2.存在循环引用问题，所谓循环引用就是当A引用B，B同时引用A时会出现对象无法回收的问题。
+
+如下图：
+
+![img](./assets/1734447629444-566.png)
+
+A对象和B对象在局部变量中已经无法访问了，但是由于他们互相引用对方，导致对象不能被回收。
+
+### 可达性分析法
+
+Java使用的是可达性分析算法来判断对象是否可以被回收。可达性分析将对象分为两类：垃圾回收的根对象（GC Root）和普通对象，对象与对象之间存在引用关系。
+
+下图中A到B再到C和D，形成了一个引用链，可达性分析算法指的是如果从某个到GC Root对象是可达的，对象就不可被回收。
+
+![img](./assets/1734447629444-567.png)
+
+哪些对象被称之为GC Root对象呢？
+
+- 线程Thread对象，引用线程栈帧中的方法参数、局部变量等。
+- 系统类加载器加载的java.lang.Class对象，引用类中的静态变量。
+- 监视器对象，用来保存同步锁synchronized关键字持有的对象。
+- 本地方法调用时使用的全局对象。
+
+### 总结：
+
+引用计数法会为每个对象维护一个引用计数器，当对象被引用时加1，取消引用时减1，存在循环引用问题所以Java没有使用这种方法。
+
+Java使用的是可达性分析算法来判断对象是否可以被回收。可达性分析将对象分为两类：垃圾回收的根对象（GC Root）和普通对象。
+
+可达性分析算法指的是如果从某个到GC Root对象是可达的，对象就不可被回收。最常见的是GC Root对象会引用栈上的局部变量和静态变量导致对象不可回收。
+
+##  JVM 中都有哪些引用类型？
+
+- 关联课程内容
+  - 基础篇-软引用
+  - 基础篇-弱虚终结器引用
+
+- 回答路径
+  - 强引用
+  - 软引用
+  - 弱引用
+  - 虚引用
+  - 终结器引用
+  - 
+
+  -  强引用，JVM中默认引用关系就是强引用，即是对象被局部变量、静态变量等GC Root关联的对象引用，只要这层关系存在，普通对象就不会被回收。
+
+  - ```Java
+    package q5reference;
+    
+    import java.util.ArrayList;
+    import java.util.List;
+    
+    //-Xmx10m -verbose:gc
+    public class StrongReferenceDemo {
+        private static int _1MB = 1024 * 1024 * 1;
+        public static void main(String[] args) {
+            List<Object> objects = new ArrayList<>();
+    
+            while (true){
+                byte[] bytes = new byte[_1MB];
+                //强引用
+                objects.add(bytes);
+            }
+    
+        }
+    }
+    ```
+
+  -  强引用的对象不会被回收掉，所以会出现内存溢出：
+
+  - ![img](./assets/1734447629444-568.png)
+
+  - 
+
+  -  软引用，软引用相对于强引用是一种比较弱的引用关系，如果一个对象只有软引用关联到它，当程序内存不足时，就会将软引用中的数据进行回收。软引用主要在缓存框架中使用。
+
+  - ```Java
+    package q5reference;
+    
+    import java.lang.ref.SoftReference;
+    import java.util.ArrayList;
+    import java.util.List;
+    
+    //-Xmx10m -verbose:gc
+    public class SoftReferenceDemo {
+        private static int _1MB = 1024 * 1024 * 1;
+        public static void main(String[] args) {
+            List<SoftReference> objects = new ArrayList<>();
+    
+            for (int i = 0; i < 10; i++) {
+                byte[] bytes = new byte[_1MB];
+                //软引用
+                SoftReference<byte[]> softReferences = new SoftReference<byte[]>(bytes);
+                //软引用对象放入集合中
+                objects.add(softReferences);
+    
+                System.out.println(i);
+            }
+    
+            //有一部分对象因为内存不足，已经被回收了
+            for (SoftReference softReference : objects) {
+                System.out.println(softReference.get());
+            }
+    
+        }
+    }
+    ```
+
+  -  内存不足时，触发了垃圾回收。
+
+  - ![img](./assets/1734447629445-569.png)
+
+  -  所以前几个对象已经被回收了，但是后边几个会保留下来：
+
+  - ![img](./assets/1734447629445-570.png)
+
+  - 
+
+  -  弱引用，弱引用的整体机制和软引用基本一致，区别在于弱引用包含的对象在垃圾回收时，不管内存够不够都会直接被回收，弱引用主要在ThreadLocal中使用。
+
+  - ```Java
+    package q5reference;
+    
+    import java.lang.ref.SoftReference;
+    import java.lang.ref.WeakReference;
+    import java.util.ArrayList;
+    import java.util.List;
+    
+    //-Xmx100m -verbose:gc
+    public class WeakReferenceDemo {
+        private static int _1MB = 1024 * 1024 * 1;
+        public static void main(String[] args) {
+            List<WeakReference<byte[]>> objects = new ArrayList<>();
+            System.out.println("-------------------");
+            for (int i = 0; i < 10; i++) {
+                byte[] bytes = new byte[_1MB];
+                //弱引用
+                WeakReference<byte[]> weakReference = new WeakReference<byte[]>(bytes);
+                //弱引用对象放入集合中
+                objects.add(weakReference);
+            }
+    
+            //设置一个强引用
+            byte[] last = objects.get(9).get();
+    
+            //手动执行一次垃圾回收，弱引用对象只要没有强引用，就会被直接回收
+            System.gc();
+            System.out.println("-------------------");
+            for (WeakReference softReference : objects) {
+                System.out.println(softReference.get());
+            }
+        }
+    }
+    ```
+
+  -  手动触发垃圾回收之后，前9个都被回收了，最后一个由于存在强引用会保留下来：
+
+  - ![img](./assets/1734447629445-571.png)
+
+  - 
+
+  -  虚引用（幽灵引用/幻影引用），不能通过虚引用对象获取到包含的对象。虚引用唯一的用途是当对象被垃圾回收器回收时可以接收到对应的通知。直接内存中为了及时知道直接内存对象不再使用，从而回收内存，使用了虚引用来实现。
+
+  - ```Java
+    package q5reference;
+    
+    import java.lang.ref.PhantomReference;
+    import java.lang.ref.Reference;
+    import java.lang.ref.ReferenceQueue;
+    import java.lang.ref.WeakReference;
+    import java.util.ArrayList;
+    import java.util.List;
+    
+    //-Xmx10m -verbose:gc
+    public class PhantomReferenceDemo {
+        private static int _1MB = 1024 * 1024 * 1;
+        public static void main(String[] args) {
+            ReferenceQueue<byte[]> queue = new ReferenceQueue();
+            byte[] bytes = new byte[_1MB];
+            MyPhantomReference phantomReference = new MyPhantomReference(bytes, queue);
+    
+            //去除强引用
+            bytes = null;
+            //执行垃圾回收
+            System.gc();
+    
+            //查看队列
+            MyPhantomReference ref = (MyPhantomReference) queue.poll();
+            //清理
+            ref.clean();
+    
+        }
+    }
+    
+    class MyPhantomReference extends PhantomReference<byte[]>{
+        public void clean(){
+            System.out.println("清理...");
+        }
+    
+        public MyPhantomReference(byte[] referent, ReferenceQueue<byte[]> q) {
+            super(referent, q);
+        }
+    }
+    ```
+
+  -  对象回收之后虚引用对象会进入队列，这样就可以获取对象执行指定的方法了。
+
+  - ![img](./assets/1734447629445-572.png)
+
+  - 
+
+  -  终结器引用，终结器引用指的是在对象需要被回收时，终结器引用会关联对象并放置在Finalizer类中的引用队列中，在稍后由一条由FinalizerThread线程从队列中获取对象，然后执行对象的finalize方法，在对象第二次被回收时，该对象才真正的被回收。
+
+  - ```Java
+    package q5reference;
+    
+    import java.io.IOException;
+    
+    //-verbose:gc
+    public class FinalizeReferenceDemo {
+        public static void main(String[] args) throws IOException {
+            Demo demo = new Demo();
+            demo = null;
+    
+            System.gc();
+    
+            System.in.read();
+        }
+    }
+    
+    
+    class Demo{
+        @Override
+        protected void finalize() throws Throwable {
+            System.out.println("触发finalize");
+            super.finalize();
+        }
+    }
+    ```
+
+ 对象回收时，触发了finalize方法：
+
+![img](./assets/1734447629445-573.png)
+
+## ThreadLocal中为什么要使用弱引用？
+
+ThreadLocal可以在线程中存放线程的本地变量，保证数据的线程安全。
+
+![img](./assets/1734447629445-574.png)
+
+ThreadLocal中是这样去保存对象的：
+
+1、在每个线程中，存放了一个ThreadLocalMap对象，本质上就是一个数组实现的哈希表，里边存放多个Entry对象。
+
+2、每个Entry对象继承自弱引用，内部存放ThreadLocal对象。同时用强引用，引用保存的ThreadLocal对应的value值。
+
+![img](./assets/1734447629445-575.png)
+
+以代码为例：
+
+```Java
+ threadLocal.set(new User(1,"main线程对象"));
+```
+
+![img](./assets/1734447629445-576.png)
+
+获取数据时：
+
+```Java
+         User user = threadLocal.get();
+```
+
+![img](./assets/1734447629445-577.png)
+
+不再使用Threadlocal对象时， threadlocal = null；由于是弱引用，那么在垃圾回收之后，ThreadLocal对象就可以被回收。
+
+![img](./assets/1734447629445-578.png)
+
+此时还有Entry对象和value对象没有能被回收，所以在ThreadLocal类的set、get、remove方法中，在某些特定条件满足的情况下，会主动删除这两个对象。
+
+如果一直不调用set、get、remove方法或者调用了没有满足条件，这部分对象就会出现内存泄漏。强烈建议在ThreadLocal不再使用时，调用remove方法回收将Entry对象的引用关系去掉，这样就可以回收这两个对象了。
+
+### 总结：
+
+当threadlocal对象不再使用时，使用弱引用可以让对象被回收；因为仅有弱引用没有强引用的情况下，对象是可以被回收的。
+
+弱引用并没有完全解决掉对象回收的问题，Entry对象和value值无法被回收，所以合理的做法是手动调用remove方法进行回收，然后再将threadlocal对象的强引用解除。
+
+## 有哪些常见的垃圾回收算法？
+
+- 关联课程内容
+  - 基础篇-垃圾回收算法的评价标准
+  - 基础篇-垃圾回收算法
+  - 基础篇-分代垃圾回收
+  - 
+
+- 回答路径
+  - 垃圾回收算法的机制、优缺点
+  - 标记清除
+  - 标记整理
+  - 复制
+  - 分代GC
+
+1960年John McCarthy发布了第一个GC算法：标记-清除算法。
+
+1963年Marvin L. Minsky 发布了复制算法。
+
+本质上后续所有的垃圾回收算法，都是在上述两种算法的基础上优化而来。
+
+![img](./assets/1734447629445-579.png)
+
+### 标记清除算法
+
+标记清除算法的核心思想分为两个阶段：
+
+1.标记阶段，将所有存活的对象进行标记。Java中使用可达性分析算法，从GC Root开始通过引用链遍历出所有存活对象。
+
+2.清除阶段，从内存中删除没有被标记也就是非存活对象。
+
+![img](./assets/1734447629445-580.png)
+
+优点：实现简单，只需要在第一阶段给每个对象维护标志位，第二阶段删除对象即可。
+
+缺点：1.碎片化问题
+
+由于内存是连续的，所以在对象被删除之后，内存中会出现很多细小的可用内存单元。如果我们需要的是一个比较大的空间，很有可能这些内存单元的大小过小无法进行分配。
+
+![img](./assets/1734447629445-581.png)
+
+2.分配速度慢。由于内存碎片的存在，需要维护一个空闲链表，极有可能发生每次需要遍历到链表的最后才能获得合适的内存空间。
+
+![img](./assets/1734447629445-582.png)
+
+### 复制算法
+
+复制算法的核心思想是：
+
+1.准备两块空间From空间和To空间，每次在对象分配阶段，只能使用其中一块空间（From空间）。
+
+![img](./assets/1734447629445-583.png)
+
+2.在垃圾回收GC阶段，将From中存活对象复制到To空间。
+
+![img](./assets/1734447629445-584.png)
+
+3.将两块空间的From和To名字互换。
+
+![img](./assets/1734447629445-585.png)
+
+优点：
+
+- 吞吐量高，复制算法只需要遍历一次存活对象复制到To空间即可，比标记-整理算法少了一次遍历的过程，因而性能较好，但是不如标记-清除算法，因为标记清除算法不需要进行对象的移动
+- 不会发生碎片化，复制算法在复制之后就会将对象按顺序放入To空间中，所以对象以外的区域都是可用空间，不存在碎片化内存空间。
+
+缺点：
+
+- 内存使用效率低，每次只能让一半的内存空间来为创建对象使用
+
+### 标记整理算法
+
+标记整理算法也叫标记压缩算法，是对标记清理算法中容易产生内存碎片问题的一种解决方案。
+
+核心思想分为两个阶段：
+
+1.标记阶段，将所有存活的对象进行标记。Java中使用可达性分析算法，从GC Root开始通过引用链遍历出所有存活对象。
+
+2.整理阶段，将存活对象移动到堆的一端。清理掉存活对象的内存空间。
+
+![img](./assets/1734447629445-586.png)
+
+优点：
+
+- 内存使用效率高，整个堆内存都可以使用，不会像复制算法只能使用半个堆内存
+- 不会发生碎片化，在整理阶段可以将对象往内存的一侧进行移动，剩下的空间都是可以分配对象的有效空间
+
+缺点：
+
+- 整理阶段的效率不高，整理算法有很多种，比如Lisp2整理算法需要对整个堆中的对象搜索3次，整体性能不佳。可以通过Two-Finger、表格算法、ImmixGC等高效的整理算法优化此阶段的性能
+
+### 分代垃圾回收算法
+
+现代优秀的垃圾回收算法，会将上述描述的垃圾回收算法组合进行使用，其中应用最广的就是分代垃圾回收算法(Generational GC)。
+
+分代垃圾回收将整个内存区域划分为年轻代和老年代：
+
+![img](./assets/1734447629445-587.png)
+
+分代回收时，创建出来的对象，首先会被放入Eden伊甸园区。
+
+随着对象在Eden区越来越多，如果Eden区满，新创建的对象已经无法放入，就会触发年轻代的GC，称为Minor GC或者Young GC。
+
+![img](./assets/1734447629445-588.png)
+
+Minor GC会把需要eden中和From需要回收的对象回收，把没有回收的对象放入To区。
+
+![img](./assets/1734447629445-589.png)
+
+接下来，S0会变成To区，S1变成From区。当eden区满时再往里放入对象，依然会发生Minor GC。
+
+![img](./assets/1734447629445-590.png)
+
+此时会回收eden区和S1(from)中的对象，并把eden和from区中剩余的对象放入S0。
+
+注意：每次Minor GC中都会为对象记录他的年龄，初始值为0，每次GC完加1。
+
+![img](./assets/1734447629445-591.png)
+
+如果Minor GC后对象的年龄达到阈值（最大15，默认值和垃圾回收器有关），对象就会被晋升至老年代。
+
+![img](./assets/1734447629445-592.png)
+
+当老年代中空间不足，无法放入新的对象时，先尝试minor gc如果还是不足，就会触发Full GC，Full GC会对整个堆进行垃圾回收。
+
+如果Full GC依然无法回收掉老年代的对象，那么当对象继续放入老年代时，就会抛出Out Of Memory异常。
+
+程序中大部分对象都是朝生夕死，在年轻代创建并且回收，只有少量对象会长期存活进入老年代。分代垃圾回收的优点有：
+
+1、可以通过调整年轻代和老年代的比例来适应不同类型的应用程序，提高内存的利用率和性能。
+
+2、新生代和老年代使用不同的垃圾回收算法，新生代一般选择复制算法效率高、不会产生内存碎片，老年代可以选择标记-清除和标记-整理算法，由程序员来选择灵活度较高。
+
+3、分代的设计中允许只回收新生代（minor gc），如果能满足对象分配的要求就不需要对整个堆进行回收(full gc),STW（Stop The World）由垃圾回收引起的停顿时间就会减少。
+
+### 总结：
+
+![img](./assets/1734447629445-593.png)
+
+## 有哪些常用的垃圾回收器？
+
+- 关联课程内容
+  - 基础篇-垃圾回收器1
+  - 基础篇-垃圾回收器2
+  - 基础篇-垃圾回收器3
+  - 基础篇-g1垃圾回收器
+  - 实战篇-垃圾回收器的选择
+  - 高级篇-ShenandoahGC
+  - 高级篇-ZG
+
+- 回答路径
+  - Serial垃圾回收器 + SerialOld垃圾回收器
+  - ParNew + CMS
+  - PS + PO
+  - G1
+  - Shenandoah 和 ZGC
+  - 
+
+垃圾回收器是垃圾回收算法的具体实现。
+
+由于垃圾回收器分为年轻代和老年代，除了G1之外其他垃圾回收器必须成对组合进行使用。
+
+具体的关系图如下：
+
+![img](./assets/1734447629446-594.png)
+
+### Serial垃圾回收器 + SerialOld垃圾回收器
+
+Serial是是一种单线程串行回收年轻代的垃圾回收器。
+
+-XX:+UseSerialGC 新生代、老年代都使用串行回收器。
+
+![img]()
+
+**回收年代和算法**
+
+- 年轻代复制算法
+- 老年代标记-整理算法
+
+**优点**
+
+单CPU处理器下吞吐量非常出色
+
+**缺点**
+
+多CPU下吞吐量不如其他垃圾回收器，堆如果偏大会让用户线程处于长时间的等待
+
+**适用场景**
+
+Java编写的客户端程序或者硬件配置有限的场景
+
+### Parallel Scavenge垃圾回收器 + Parallel Old垃圾回收器
+
+PS+PO是JDK8默认的垃圾回收器，多线程并行回收，关注的是系统的吞吐量。具备自动调整堆内存大小的特点。
+
+![img](./assets/1734447629446-595.png)
+
+**回收年代和算法**
+
+- 年轻代复制算法
+- 老年代标记-整理算法
+
+**优点**
+
+吞吐量高，而且手动可控。为了提高吞吐量，虚拟机会动态调整堆的参数
+
+**缺点**
+
+不能保证单次的停顿时间
+
+**适用场景**
+
+后台任务，不需要与用户交互，并且容易产生大量的对象
+
+比如：大数据的处理，大文件导出
+
+### 年轻代-ParNew垃圾回收器
+
+ParNew垃圾回收器本质上是对Serial在多CPU下的优化，使用多线程进行垃圾回收
+
+-XX:+UseParNewGC 新生代使用ParNew回收器，老年代使用串行回收器
+
+![img](./assets/1734447629446-596.png)
+
+**回收年代和算法**
+
+- 年轻代
+- 复制算法
+
+**优点**
+
+多CPU处理器下停顿时间较短
+
+**缺点**
+
+吞吐量和停顿时间不如G1，所以在JDK9之后不建议使用
+
+**适用场景**
+
+ JDK8及之前的版本中，与CMS老年代垃圾回收器搭配使用
+
+### 老年代- CMS(Concurrent Mark Sweep)垃圾回收器
+
+CMS垃圾回收器关注的是系统的暂停时间，允许用户线程和垃圾回收线程在某些步骤中同时执行，减少了用户线程的等待时间。
+
+参数：-XX:+UseConcMarkSweepGC
+
+![img](./assets/1734447629446-597.png)
+
+**回收年代和算法**
+
+- 老年代
+- 标记清除算法
+
+**优点**
+
+系统由于垃圾回收出现的停顿时间较短，用户体验好
+
+**缺点**
+
+1、内存碎片问题
+
+2、退化问题
+
+3、浮动垃圾问题
+
+**适用场景**
+
+大型的互联网系统中用户请求数据量大、频率高的场景
+
+比如订单接口、商品接口等
+
+**CMS垃圾回收器存在的问题**
+
+1、CMS使用了标记-清除算法，在垃圾收集结束之后会出现大量的内存碎片，CMS会在Full GC时进行碎片的整理。这样会导致用户线程暂停，可以使用-XX:CMSFullGCsBeforeCompaction=N 参数（默认0）调整N次Full GC之后再整理。
+
+2.、无法处理在并发清理过程中产生的“浮动垃圾”，不能做到完全的垃圾回收。
+
+3、如果老年代内存不足无法分配对象，CMS就会退化成Serial Old单线程回收老年代。
+
+4、并发阶段会影响用户线程执行的性能
+
+### G1 – Garbage First 垃圾回收器
+
+参数1： -XX:+UseG1GC  打开G1的开关，JDK9之后默认不需要打开
+
+参数2：-XX:MaxGCPauseMillis=毫秒值
+
+最大暂停的时间
+
+![img](./assets/1734447629446-598.png)
+
+**回收年代和算法**
+
+- 年轻代+老年代
+- 复制算法
+
+**优点**
+
+对比较大的堆如超过6G的堆回收时，延迟可控
+
+不会产生内存碎片
+
+并发标记的SATB算法效率高
+
+**缺点**
+
+JDK8之前还不够成熟
+
+**适用场景**
+
+JDK8最新版本、JDK9之后建议默认使用
+
+### 什么是Shenandoah？
+
+Shenandoah 是由Red Hat开发的一款低延迟的垃圾收集器，Shenandoah 并发执行大部分 GC 工作，包括并发的整理，堆大小对STW的时间基本没有影响。
+
+![img](./assets/1734447629446-599.png)
+
+### 什么是ZGC？
+
+ZGC 是一种可扩展的低延迟垃圾回收器。ZGC 在垃圾回收过程中，STW的时间不会超过一毫秒，适合需要低延迟的应用。支持几百兆到16TB 的堆大小，堆大小对STW的时间基本没有影响。 
+
+![img](./assets/1734447629446-600.png)
+
+### 垃圾回收器的技术演进
+
+![img](./assets/1734447629446-601.png)
+
+### 总结：
+
+垃圾回收器的组合关系虽然很多，但是针对几个特定的版本，比较好的组合选择如下：
+
+JDK8及之前：
+
+ParNew + CMS（关注暂停时间）、Parallel Scavenge + Parallel Old (关注吞吐量)、 G1（JDK8之前不建议，较大堆并且关注暂停时间）
+
+JDK9之后:
+
+G1（默认）
+
+从JDK9之后，由于G1日趋成熟，JDK默认的垃圾回收器已经修改为G1，所以强烈建议在生产环境上使用G1。
+
+如果对低延迟有较高的要求，可以使用Shenandoah或者ZGC。
+
+## 如何解决内存泄漏问题？
+
+- 关联课程内容
+  - 实战篇-内存泄漏和内存溢出
+  - …
+  - 实战篇-btrace和arthas在线定位问题
+
+- 回答路径
+  - 内存泄漏和内存溢出
+  - 解决内存泄漏问题的思路
+  - 常用的工具
+  - 
+
+  -  内存泄漏（memory leak）：在Java中如果不再使用一个对象，但是该对象依然在GC ROOT的引用链上，这个对象就不会被垃圾回收器回收，这种情况就称之为内存泄漏。
+
+  -  少量的内存泄漏可以容忍，但是如果发生持续的内存泄漏，就像滚雪球雪球越滚越大，不管有多大的内存迟早会被消耗完，最终导致的结果就是内存溢出。                
+
+![img](./assets/1734447629446-602.png)
+
+解决内存泄漏问题总共分为四个步骤，其中前两个步骤是最核心的：
+
+![img](./assets/1734447629446-603.png)
+
+### 发现问题 – 堆内存状况的对比
+
+**正常情况**
+
+![img](./assets/1734447629446-604.png)
+
+- 处理业务时会出现上下起伏，业务对象频繁创建内存会升高，触发MinorGC之后内存会降下来。
+- 手动执行FULL GC之后，内存大小会骤降，而且每次降完之后的大小是接近的。
+- 长时间观察内存曲线应该是在一个范围内。
+
+**出现内存泄漏**
+
+![img](./assets/1734447629446-605.png)
+
+- 处于持续增长的情况，即使Minor GC也不能把大部分对象回收
+- 手动FULL GC之后的内存量每一次都在增长
+- 长时间观察内存曲线持续增长
+
+生产环境通过运维提供的Prometheus + Grafana等监控平台查看
+
+开发、测试环境通过visualvm查看
+
+```Java
+package q7oom;
+
+import java.util.ArrayList;
+import java.util.List;
+
+//-Xmx10m -verbose:gc
+public class OOMDemo {
+    private static int _1MB = 1024 * 1024 * 1;
+    public static void main(String[] args) throws InterruptedException {
+        List<Object> objects = new ArrayList<>();
+
+        while (true){
+            byte[] bytes = new byte[_1MB];
+            //强引用
+            objects.add(bytes);
+            Thread.sleep(50);
+        }
+
+    }
+}
+```
+
+这段代码执行之后，使用visualvm查看结果：
+
+![img](./assets/1734447629446-606.png)
+
+处于持续增长的情况，手动FULL GC之后的内存量每一次都在增长，长时间观察内存曲线持续增长。属于内存泄漏的情况。
+
+### 诊断 – 生成内存快照
+
+当堆内存溢出时，需要在堆内存溢出时将整个堆内存保存下来，生成内存快照(Heap Profile )文件。
+
+生成方式有两种
+
+1、内存溢出时自动生成，添加生成内存快照的Java虚拟机参数：
+
+​    -XX:+HeapDumpOnOutOfMemoryError：发生OutOfMemoryError错误时，自动生成hprof内存快照文件。
+
+​    -XX:HeapDumpPath=<path>：指定hprof文件的输出路径。
+
+![img](./assets/1734447629446-607.png)
+
+发生oom之后，就会生成内存快照文件：
+
+![img](./assets/1734447629446-608.png)
+
+2、导出运行中系统的内存快照，比较简单的方式有两种，注意只需要导出标记为存活的对象：
+
+通过JDK自带的jmap命令导出，格式为：
+
+​      jmap -dump:live,format=b,file=文件路径和文件名 进程ID
+
+通过arthas的heapdump命令导出，格式为：
+
+​      heapdump --live  文件路径和文件名 
+
+![img](./assets/1734447629446-609.png)
+
+### 诊断 – MAT定位问题
+
+使用MAT打开hprof文件，并选择内存泄漏检测功能，MAT会自行根据内存快照中保存的数据分析内存泄漏的根源。
+
+![img](./assets/1734447629446-610.png)
+
+### 修复问题
+
+修复内存溢出问题的要具体问题具体分析，问题总共可以分成三类：
+
+- 代码中的内存泄漏，由于代码的不合理写法存在隐患，导致内存泄漏
+- 并发引起内存溢出 - 参数不当,由于参数设置不当，比如堆内存设置过小，导致并发量增加之后超过堆内存的上限。解决方案：设置合理参数
+- 并发引起内存溢出 – 设计不当，系统的方案设计不当，比如：
+  - 从数据库获取超大数据量的数据
+  - 线程池设计不当
+  - 生产者-消费者模型，消费者消费性能问题
+
+​      解决方案：优化设计方案
+
+### 常用的JVM工具
+
+JDK自带的命令行工具：
+
+jps   查看java进程，打印main方法所在类名和进程id
+
+jmap  1、生成堆内存快照
+
+​         2、打印类的直方图 
+
+第三方工具：
+
+VisualVM 监控
+
+Arthas  综合性工具
+
+MAT        堆内存分析工具
+
+监控工具：
+
+Prometheus + grafana 
+
+## 常见的JVM参数？
+
+- 关联课程内容
+  - 实战篇-基础JVM参数的设置
+  - 实战篇-垃圾回收器的选择
+  - 实战篇-垃圾回收参数调优
+
+- 回答路径
+  - 最大堆内存参数
+  - 最大栈内存参数
+  - 最大元空间内存参数
+  - 日志参数
+  - 堆内存快照参数
+  - 垃圾回收器参数
+  - 垃圾回收器调优参数
+  - 
+
+  - ###  参数1 ： -Xmx 和 –Xms
+
+  - 
+
+  -  -Xmx参数设置的是最大堆内存，但是由于程序是运行在服务器或者容器上，计算可用内存时，要将元空间、操作系统、其它软件占用的内存排除掉。
+
+  -  案例： 服务器内存4G，操作系统+元空间最大值+其它软件占用1.5G，-Xmx可以设置为2g。
+
+  - ![img](./assets/1734447629446-611.png)
+
+  -  最合理的设置方式应该是根据最大并发量估算服务器的配置，然后再根据服务器配置计算最大堆内存的值。
+
+  -  建议将-Xms设置的和-Xmx一样大,运行过程中不再产生扩容的开销。
+
+### 参数2 ： -XX:MaxMetaspaceSize 和 -Xss
+
+-XX:MaxMetaspaceSize=值  参数指的是最大元空间大小，默认值比较大，如果出现元空间内存泄漏会让操作系统可用内存不可控，建议根据测试情况设置最大值，一般设置为256m。
+
+-Xss256k 栈内存大小，如果我们不指定栈的大小，JVM 将创建一个具有默认大小的栈。大小取决于操作系统和计算机的体系结构。比如Linux x86 64位 ： 1MB，如果不需要用到这么大的栈内存，完全可以将此值调小节省内存空间，合理值为256k – 1m之间。
+
+### 参数3：-Xmn 年轻代的大小
+
+默认值为整个堆的1/3，可以根据峰值流量计算最大的年轻代大小，尽量让对象只存放在年轻代，不进入老年代。但是实际的场景中，接口的响应时间、创建对象的大小、程序内部还会有一些定时任务等不确定因素都会导致这个值的大小并不能仅凭计算得出，如果设置该值要进行大量的测试。G1垃圾回收器尽量不要设置该值，G1会动态调整年轻代的大小。
+
+![img](./assets/1734447629446-612.png)
+
+### 打印GC日志
+
+JDK8及之前 ： -XX:+PrintGCDetails -XX:+PrintGCDateStamps -Xloggc:文件路径
+
+JDK9及之后 ： -Xlog:gc*:file=文件路径
+
+ -XX:+DisableExplicitGC
+
+禁止在代码中使用System.gc()， System.gc()可能会引起FULLGC，在代码中尽量不要使用。使用DisableExplicitGC参数可以禁止使用System.gc()方法调用。
+
+-XX:+HeapDumpOnOutOfMemoryError：发生OutOfMemoryError错误时，自动生成hprof内存快照文件。
+
+  -XX:HeapDumpPath=<path>：指定hprof文件的输出路径。
+
+### JVM参数模板：
+
+```Java
+-Xms1g-Xmx1g-Xss256k
+-XX:MaxMetaspaceSize=512m 
+-XX:+DisableExplicitGC
+-XX:+HeapDumpOnOutOfMemoryError
+-XX:HeapDumpPath=/opt/dumps/my-service.hprof
+-XX:+PrintGCDetails 
+-XX:+PrintGCDateStamps 
+-Xloggc:文件路径
+```
+
+注意：
+
+JDK9及之后gc日志输出修改为 -Xlog:gc*:file=文件名
+
+堆内存大小和栈内存大小根据实际情况灵活调整。
