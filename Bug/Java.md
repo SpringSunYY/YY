@@ -119,3 +119,156 @@ logging:
 - 通过调试日志输出获取更多的错误信息。
 
 如果这些检查后问题依然存在，建议逐步回退并测试每个配置，逐步定位问题的根源。
+
+
+
+# Json
+
+## 问题记录：JSON解析导致的`ClassCastException`（`Integer`无法转换为`Long`）
+
+**源代码**
+
+```java
+    @Override
+    public InformTemplateInfo getInformTemplateInfoByVersion(InformTemplateInfoVersionQuery informTemplateInfoVersionQuery) {
+        InformTemplateInfo info = informTemplateInfoMapper.selectInformTemplateInfoByTemplateId(informTemplateInfoVersionQuery.getTemplateId());
+        if (StringUtils.isNull(info)) {
+            throw new ServiceException("通知模版不存在");
+        }
+        HashMap<Long, String> parse = (HashMap<Long, String>) JSONObject.parseObject(info.getTemplateVersionHistory(), HashMap.class);
+        Long templateVersion = informTemplateInfoVersionQuery.getTemplateVersion();
+        System.out.println("templateVersion = " + templateVersion);
+//        if (!parse.containsKey(templateVersion)) {
+//            throw new ServiceException("指定的通知模版版本不存在");
+//        }
+        for (Map.Entry<Long, String> longStringEntry : parse.entrySet()) {
+            System.out.println("Key type: " + longStringEntry.getKey().getClass().getName());
+            System.out.println(longStringEntry.getKey());
+            System.out.println("parse = " + parse.get(longStringEntry.getKey()));
+        }
+        String informTemplateInfoHistory = parse.get(templateVersion);
+        System.out.println("informTemplateInfoHistory = " + informTemplateInfoHistory);
+        return InformTemplateInfoHistory.getInformTemplateInfoByVersion(informTemplateInfoHistory);
+    }
+```
+
+**修改后**
+
+```java
+    @Override
+    public InformTemplateInfo getInformTemplateInfoByVersion(InformTemplateInfoVersionQuery informTemplateInfoVersionQuery) {
+        InformTemplateInfo info = informTemplateInfoMapper.selectInformTemplateInfoByTemplateId(informTemplateInfoVersionQuery.getTemplateId());
+        if (StringUtils.isNull(info)) {
+            throw new ServiceException("通知模版不存在");
+        }
+        // 使用 TypeReference 明确指定键为 Long 类型
+        HashMap<Long, String> parse = JSON.parseObject(
+                info.getTemplateVersionHistory(),
+                new TypeReference<HashMap<Long, String>>() {}
+        );
+        Long templateVersion = informTemplateInfoVersionQuery.getTemplateVersion();
+        System.out.println("templateVersion = " + templateVersion);
+        if (!parse.containsKey(templateVersion)) {
+            throw new ServiceException("指定的通知模版版本不存在");
+        }
+        for (Map.Entry<Long, String> longStringEntry : parse.entrySet()) {
+            System.out.println("Key type: " + longStringEntry.getKey().getClass().getName());
+            System.out.println(longStringEntry.getKey());
+            System.out.println("parse = " + parse.get(longStringEntry.getKey()));
+        }
+        String informTemplateInfoHistory = parse.get(templateVersion);
+        System.out.println("informTemplateInfoHistory = " + informTemplateInfoHistory);
+        return InformTemplateInfoHistory.getInformTemplateInfoByVersion(informTemplateInfoHistory);
+    }
+```
+
+
+
+#### **问题背景**
+
+在通过版本号查询通知模板历史记录时，出现以下错误：
+
+```
+ java.lang.ClassCastException: class java.lang.Integer cannot be cast to class java.lang.Long
+```
+
+原因是代码中尝试用 `Long` 类型的键去查询 `HashMap<Long, String>`，但实际 JSON 解析后的键为 `Integer` 类型。
+
+#### **问题复现**
+
+- **触发条件** 调用接口 `/config/informTemplateInfo/version`，传入 `templateVersion=2`（`Long` 类型参数）。
+
+- **关键代码**
+
+  ```
+  JavaHashMap<Long, String> parse = (HashMap<Long, String>) JSONObject.parseObject(info.getTemplateVersionHistory(), HashMap.class);
+  Long templateVersion = query.getTemplateVersion();
+  String history = parse.get(templateVersion); // 此处报错
+  ```
+
+- **日志分析**
+
+  ```
+   Key type: java.lang.Integer  // 实际键类型为 Integer
+  templateVersion = 2          // 查询参数为 Long 类型
+  informTemplateInfoHistory = null
+  ```
+
+#### **根本原因**
+
+1. **JSON 反序列化类型推断问题** FastJSON 默认将 JSON 中的数字类型解析为 `Integer`（若数值较小），而代码期望键为 `Long` 类型。
+2. **类型不匹配** `parse` 的键实际为 `Integer` 类型，但代码尝试用 `Long` 类型的 `templateVersion` 查询，导致 `ClassCastException`。
+
+#### **解决方案**
+
+使用 FastJSON 的 `TypeReference` 强制指定键值类型，确保反序列化后的键为 `Long` 类型。
+
+**修改后的代码：**
+
+```java
+Javaimport com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.TypeReference;
+
+HashMap<Long, String> parse = JSON.parseObject(
+    info.getTemplateVersionHistory(),
+    new TypeReference<HashMap<Long, String>>() {}
+);
+```
+
+#### **关键修改点**
+
+1. **替换解析方式** 使用 `JSON.parseObject` 替代 `JSONObject.parseObject`，配合 `TypeReference` 明确类型。
+2. **类型一致性** 确保 `HashMap` 的键类型（`Long`）与查询参数 `templateVersion` 类型完全一致。
+
+#### **验证步骤**
+
+1. **添加日志检查键类型**
+
+   ```java
+   Javafor (Map.Entry<Long, String> entry : parse.entrySet()) {
+       System.out.println("Key type: " + entry.getKey().getClass().getName());
+   }
+   ```
+
+   输出应为 `java.lang.Long`。
+
+2. **测试查询** 传入 `templateVersion=2`，确认能正确返回历史记录且无空值。
+
+#### **注意事项**
+
+1. **FastJSON 版本依赖** 确保使用 FastJSON ≥1.2.83（旧版本可能不支持 `TypeReference` 泛型解析）。
+
+   ```
+   XML<dependency>
+       <groupId>com.alibaba</groupId>
+       <artifactId>fastjson</artifactId>
+       <version>1.2.83</version>
+   </dependency>
+   ```
+
+2. **备选方案** 如果版本号较小（不超过 `Integer.MAX_VALUE`），可将 `templateVersion` 类型改为 `Integer`，但需全局统一类型。
+
+#### **问题总结**
+
+- **教训** JSON 反序列化时，默认类型推断可能与预期不一致，需通过 `TypeReference` 显式指定类型。
+- **改进点** 所有涉及 JSON 解析的地方，避免直接使用 `HashMap.class`，优先指定明确类型。
