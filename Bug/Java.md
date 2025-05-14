@@ -4,6 +4,97 @@
 
 此注解如果使用static，注册不了值
 
+
+
+## @Autiwired和@Resource 
+
+`@Autowired` 和 [[@Resource](file://jakarta\annotation\Resource.java#L4-L23)](file://jakarta/annotation/Resource.java#L4-L23) 都是用于依赖注入的注解，但在使用方式和行为上有明显区别。下面是对它们的核心差异总结：
+
+---
+
+### ✅ 1. 来源不同
+
+| 注解                                                         | 来源                          | 所属框架             |
+| ------------------------------------------------------------ | ----------------------------- | -------------------- |
+| `@Autowired`                                                 | Spring 框架提供               | Spring               |
+| [[@Resource](file://jakarta\annotation\Resource.java#L4-L23)](file://jakarta/annotation/Resource.java#L4-L23) | Java 标准注解（属于 JSR-250） | Java EE / Jakarta EE |
+
+---
+
+### ✅ 2. 默认注入方式不同
+
+| 注解                                                         | 默认按类型注入 | 默认按名称注入                   |
+| ------------------------------------------------------------ | -------------- | -------------------------------- |
+| `@Autowired`                                                 | ✅ 是           | ❌ 否                             |
+| [[@Resource](file://jakarta\annotation\Resource.java#L4-L23)](file://jakarta/annotation/Resource.java#L4-L23) | ❌ 否           | ✅ 是（默认字段名作为 Bean 名称） |
+
+> 示例：
+```java
+@Resource
+private AlipayPaymentConfig config; 
+// 等价于查找名为 "config" 的 Bean
+
+@Autowired
+private AlipayPaymentConfig config;
+// 查找匹配 AlipayPaymentConfig 类型的唯一 Bean
+```
+
+
+---
+
+### ✅ 3. 是否支持指定 Bean 名称
+
+| 注解                                                         | 支持 [name](file://jakarta\annotation\Resource.java#L8-L8) 属性 | 示例                                      |
+| ------------------------------------------------------------ | ------------------------------------------------------------ | ----------------------------------------- |
+| `@Autowired`                                                 | ❌ 不支持                                                     | N/A                                       |
+| [[@Resource](file://jakarta\annotation\Resource.java#L4-L23)](file://jakarta/annotation/Resource.java#L4-L23) | ✅ 支持                                                       | `@Resource(name = "alipayPaymentConfig")` |
+
+---
+
+### ✅ 4. 使用推荐场景
+
+| 场景                                 | 推荐注解                                                     |
+| ------------------------------------ | ------------------------------------------------------------ |
+| Spring 项目中注入 Bean               | ✅ `@Autowired`（更简洁、符合 Spring 编程习惯）               |
+| 需要按名称注入 Bean                  | ✅ [[@Resource](file://jakarta\annotation\Resource.java#L4-L23)](file://jakarta/annotation/Resource.java#L4-L23) |
+| 非 Spring 管理的对象（如 JNDI 资源） | ✅ [[@Resource](file://jakarta\annotation\Resource.java#L4-L23)](file://jakarta/annotation/Resource.java#L4-L23) |
+
+---
+
+### ✅ 5. 实际代码对比
+
+```java
+// 使用 @Autowired（推荐）
+@Autowired
+private AlipayPaymentConfig config;
+
+// 使用 @Resource（需要指定名称才能正确注入）
+@Resource(name = "alipayPaymentConfig")
+private AlipayPaymentConfig config;
+```
+
+
+---
+
+### ✅ 总结对比表
+
+| 特性                                                         | `@Autowired` | [[@Resource](file://jakarta\annotation\Resource.java#L4-L23)](file://jakarta/annotation/Resource.java#L4-L23) |
+| ------------------------------------------------------------ | ------------ | ------------------------------------------------------------ |
+| 来源                                                         | Spring 提供  | Java 提供（标准注解）                                        |
+| 默认注入方式                                                 | 按类型       | 按名称                                                       |
+| 是否支持 [name](file://jakarta\annotation\Resource.java#L8-L8) | ❌ 否         | ✅ 是                                                         |
+| 是否适合 Spring 项目                                         | ✅ 强烈推荐   | ✅ 可用                                                       |
+| 是否适用于非 Spring 对象                                     | ❌ 否         | ✅ 是                                                         |
+
+---
+
+📌 **结论：**
+
+- 在 **Spring 项目中**，优先使用 `@Autowired`，简单、清晰、无需关心 Bean 名字。
+- 如果你需要 **精确控制注入的 Bean 名称**，或在 **非 Spring 容器环境**下开发，可以使用 [[@Resource](file://jakarta\annotation\Resource.java#L4-L23)](file://jakarta/annotation/Resource.java#L4-L23)。
+
+如果你当前已经知道 Bean 名为 `alipayPaymentConfig`，使用 [[@Resource](file://jakarta\annotation\Resource.java#L4-L23)](file://jakarta/annotation/Resource.java#L4-L23) 并显式指定 name 是没问题的。否则建议继续使用 `@Autowired`。
+
 # MP
 
 ## 实体类与数据库表映射异常
