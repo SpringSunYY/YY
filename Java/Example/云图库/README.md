@@ -1303,7 +1303,7 @@ const items = ref<MenuProps['items']>([
 
 #### 1、修改路由配置
 
-按需修改 router/index.ts 文件的 routes 配置，定义我们需要的页面路由，每个 path 对应一个 component（要加载的组件）：cT00UyE1JKn/y8Q147TQRzbDavEs+V72bbBFCS1wu6g=
+按需修改 router/index.ts 文件的 routes 配置，定义我们需要的页面路由，每个 path 对应一个 component（要加载的组件）：
 
 ```css
 routes: [
@@ -1354,14 +1354,14 @@ const doMenuClick = ({ key }: { key: string }) => {
 
 #### 3、高亮同步
 
-刷新页面后，你会发现当前菜单项并没有高亮，所以需要同步路由的更新到菜单项高亮。cT00UyE1JKn/y8Q147TQRzbDavEs+V72bbBFCS1wu6g=
+刷新页面后，你会发现当前菜单项并没有高亮，所以需要同步路由的更新到菜单项高亮。
 
 同步高亮原理：
 
 1. 点击菜单时，Ant Design 组件已经通过 v-model 绑定 current 变量实现了高亮。
 2. 刷新页面时，需要获取到当前 URL 路径，然后修改 current 变量的值，从而实现同步。
 
-使用 Vue Router 的 afterEach 路由钩子实现，每次改变路由或刷新页面时都会自动更新 current 的值，从而实现高亮：sqWmWUk8kFL4uPey9+8ro5dv7g8fCeOwW9uL7T8/Q4k=
+使用 Vue Router 的 afterEach 路由钩子实现，每次改变路由或刷新页面时都会自动更新 current 的值，从而实现高亮：
 
 ```tsx
 const router = useRouter();
@@ -1594,7 +1594,7 @@ const loginUserStore = useLoginUserStore()
 loginUserStore.fetchLoginUser()
 ```
 
-在任何页面中都可以使用数据，比如 GlobalHeader 全局顶部栏组件中直接展示：qHT6Kxg12X1vklSWA3QVO0Z9aqth3Yj5Z1UQTagntCA=
+在任何页面中都可以使用数据，比如 GlobalHeader 全局顶部栏组件中直接展示：
 
 ```typescript
 {{ JSON.stringify(loginUserStore.loginUser) }}
