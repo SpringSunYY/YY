@@ -217,7 +217,168 @@ logging:
 
 如果这些检查后问题依然存在，建议逐步回退并测试每个配置，逐步定位问题的根源。
 
+## mybatis自动分页
 
+#### **问题表现**
+
+1. 在MySQL客户端能正常执行的SQL，通过MyBatis查询却返回空数据
+2. 返回对象显示为分页对象：`Page{count=true, pageNum=0, ...}[]`
+3. 出现Druid解析错误：`ParserException: not supported.pos... token LIMIT`
+4. 实际数据为空数组`[]`，但分页信息显示有数据(`total=10`)
+
+#### **根本原因分析**
+
+##### 1. **分页插件自动激活**
+
+- **触发机制**：
+  - MyBatis分页插件(PageHelper)自动检测到参数对象中的`pageNum`和`pageSize`字段
+  - 即使没有显式调用`PageHelper.startPage()`，插件仍会自动进行分页处理
+- **后果**：
+  - 原始查询被包装为分页查询
+  - 实际执行两个SQL：先执行count查询，再执行分页查询
+  - 返回类型被强制转为`Page`对象
+
+##### 2. **Druid SQL解析限制**
+
+- **技术限制**：
+  - Druid SQL解析器不支持CTE(WITH子句)后直接使用LIMIT的语法
+  - 这是Druid已知的语法解析限制
+- **触发场景**：
+  - 当分页插件执行count查询时尝试解析原始SQL
+  - 解析器遇到CTE+LIMIT组合语法抛出异常
+
+##### 3. **参数对象设计问题**
+
+- **冲突字段**：
+
+  ```
+  private Integer pageNum;  // 触发分页插件
+  private Integer pageSize; // 触发分页插件
+  ```
+
+- **后果**：
+
+  - 标准字段名`pageNum`/`pageSize`被分页插件识别
+  - 即使业务不需要分页，插件仍会强制干预
+
+##### 4. **SQL结构问题**
+
+- **语法兼容性**：
+
+  ```
+  WITH CTE AS (...) SELECT ... LIMIT ? OFFSET ?
+  ```
+
+- 虽然MySQL支持，但：
+
+  - 某些SQL解析器不支持
+  - 分页插件包装时出现冲突
+
+#### **解决方案**
+
+##### 1. **解决分页插件干扰**
+
+```java
+// 服务层代码
+public List<UserPictureInfoVo> getPictureInfoDetailRecommend(...) {
+    PageHelper.clearPage(); // 关键：清除分页设置
+    req.setOffset((req.getCurrentPage() - 1) * req.getPageSize());
+    List<PictureInfo> list = pictureInfoMapper.getPictureInfoDetailRecommend(req);
+    // ...
+}
+```
+
+```yml
+# application.yml 配置
+pagehelper:
+  auto-runtime-dialect: false
+  support-methods-arguments: false
+  params: ""
+```
+
+##### 2. **重构参数对象**
+
+```java
+@Data
+public class PictureInfoRecommendRequest {
+    // 重命名字段避免冲突
+    private Integer currentPage;  // 原pageNum
+    private Integer sizePerPage;  // 原pageSize
+    private Integer offset;
+    
+    // 添加偏移量计算方法
+    public void calculateOffset() {
+        this.offset = (this.currentPage - 1) * this.sizePerPage;
+    }
+}
+```
+
+##### 3. **修复SQL兼容性**
+
+```sql
+<select id="getPictureInfoDetailRecommend">
+  SELECT * FROM (
+    WITH origin_tags AS (...),
+         matched_images AS (...)
+    SELECT ... 
+    ORDER BY ...
+  ) AS wrapped_query <!-- 关键包装层 -->
+  LIMIT #{sizePerPage}
+  OFFSET #{offset}
+</select>
+```
+
+##### 4. **优化SQL逻辑**
+
+```sql
+COUNT(DISTINCT CASE 
+     WHEN rel.tag_name IN (SELECT tag_name FROM origin_tags) 
+     THEN rel.tag_name 
+ END) AS exact_match_count
+```
+
+#### **预防措施**
+
+1. **分页插件使用规范**：
+
+   - 避免在参数对象中使用`pageNum`/`pageSize`标准名
+   - 显式调用`PageHelper.startPage()`或`clearPage()`
+   - 在非分页查询前强制清除分页设置
+
+2. **SQL设计原则**：
+
+   - 复杂查询（含CTE）使用子查询包装
+   - 避免在CTE后直接使用LIMIT/OFFSET
+   - 为分页参数设置合理的默认值
+
+3. **参数对象设计**：
+
+   ```java
+   public class QueryParam {
+       private Integer current = 1;  // 当前页
+       private Integer size = 10;    // 每页大小
+       @JsonIgnore                  // 防止序列化
+       private transient Integer offset; // 计算字段
+   }
+   ```
+
+4. **日志监控**：
+
+   ```yml
+   logging:
+     level:
+       com.github.pagehelper: DEBUG
+       com.alibaba.druid: WARN
+   ```
+
+<svg role="graphics-document document" viewBox="0 0 912.6146240234375 868.09375" class="flowchart mermaid-svg" xmlns="http://www.w3.org/2000/svg" width="100%" id="mermaid-svg-1" style="max-width: 912.615px; transform-origin: 0px 0px; user-select: none; transform: translate(77.8554px, 0px) scale(0.792938);"><g><marker orient="auto" markerHeight="8" markerWidth="8" markerUnits="userSpaceOnUse" refY="5" refX="5" viewBox="0 0 10 10" class="marker flowchart-v2" id="mermaid-svg-1_flowchart-v2-pointEnd"><path style="stroke-width: 1; stroke-dasharray: 1, 0;" class="arrowMarkerPath" d="M 0 0 L 10 5 L 0 10 z"></path></marker><marker orient="auto" markerHeight="8" markerWidth="8" markerUnits="userSpaceOnUse" refY="5" refX="4.5" viewBox="0 0 10 10" class="marker flowchart-v2" id="mermaid-svg-1_flowchart-v2-pointStart"><path style="stroke-width: 1; stroke-dasharray: 1, 0;" class="arrowMarkerPath" d="M 0 5 L 10 10 L 10 0 z"></path></marker><marker orient="auto" markerHeight="11" markerWidth="11" markerUnits="userSpaceOnUse" refY="5" refX="11" viewBox="0 0 10 10" class="marker flowchart-v2" id="mermaid-svg-1_flowchart-v2-circleEnd"><circle style="stroke-width: 1; stroke-dasharray: 1, 0;" class="arrowMarkerPath" r="5" cy="5" cx="5"></circle></marker><marker orient="auto" markerHeight="11" markerWidth="11" markerUnits="userSpaceOnUse" refY="5" refX="-1" viewBox="0 0 10 10" class="marker flowchart-v2" id="mermaid-svg-1_flowchart-v2-circleStart"><circle style="stroke-width: 1; stroke-dasharray: 1, 0;" class="arrowMarkerPath" r="5" cy="5" cx="5"></circle></marker><marker orient="auto" markerHeight="11" markerWidth="11" markerUnits="userSpaceOnUse" refY="5.2" refX="12" viewBox="0 0 11 11" class="marker cross flowchart-v2" id="mermaid-svg-1_flowchart-v2-crossEnd"><path style="stroke-width: 2; stroke-dasharray: 1, 0;" class="arrowMarkerPath" d="M 1,1 l 9,9 M 10,1 l -9,9"></path></marker><marker orient="auto" markerHeight="11" markerWidth="11" markerUnits="userSpaceOnUse" refY="5.2" refX="-1" viewBox="0 0 11 11" class="marker cross flowchart-v2" id="mermaid-svg-1_flowchart-v2-crossStart"><path style="stroke-width: 2; stroke-dasharray: 1, 0;" class="arrowMarkerPath" d="M 1,1 l 9,9 M 10,1 l -9,9"></path></marker><g class="root"><g class="clusters"></g><g class="edgePaths"><path marker-end="url(#mermaid-svg-1_flowchart-v2-pointEnd)" style="" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" id="L_A_B_0" d="M458.961,62L458.961,66.167C458.961,70.333,458.961,78.667,459.031,86.417C459.101,94.167,459.242,101.334,459.312,104.917L459.383,108.501"></path><path marker-end="url(#mermaid-svg-1_flowchart-v2-pointEnd)" style="" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" id="L_B_C_0" d="M410.606,267.739L397.381,281.965C384.155,296.191,357.704,324.642,344.478,349.535C331.253,374.427,331.253,395.76,331.253,415.094C331.253,434.427,331.253,451.76,331.253,463.927C331.253,476.094,331.253,483.094,331.253,486.594L331.253,490.094"></path><path marker-end="url(#mermaid-svg-1_flowchart-v2-pointEnd)" style="" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" id="L_C_D_0" d="M331.253,548.094L331.253,552.26C331.253,556.427,331.253,564.76,331.253,572.427C331.253,580.094,331.253,587.094,331.253,590.594L331.253,594.094"></path><path marker-end="url(#mermaid-svg-1_flowchart-v2-pointEnd)" style="" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" id="L_B_E_0" d="M508.316,267.739L521.375,281.965C534.433,296.191,560.551,324.642,573.61,344.368C586.669,364.094,586.669,375.094,586.669,380.594L586.669,386.094"></path><path marker-end="url(#mermaid-svg-1_flowchart-v2-pointEnd)" style="" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" id="L_E_F_0" d="M586.669,444.094L586.669,448.26C586.669,452.427,586.669,460.76,586.669,468.427C586.669,476.094,586.669,483.094,586.669,486.594L586.669,490.094"></path><path marker-end="url(#mermaid-svg-1_flowchart-v2-pointEnd)" style="" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" id="L_F_G_0" d="M586.669,548.094L586.669,552.26C586.669,556.427,586.669,564.76,586.669,572.427C586.669,580.094,586.669,587.094,586.669,590.594L586.669,594.094"></path><path marker-end="url(#mermaid-svg-1_flowchart-v2-pointEnd)" style="" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" id="L_D_H_0" d="M331.253,652.094L331.253,656.26C331.253,660.427,331.253,668.76,341.587,677.135C351.92,685.509,372.588,693.925,382.922,698.133L393.256,702.34"></path><path marker-end="url(#mermaid-svg-1_flowchart-v2-pointEnd)" style="" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" id="L_G_H_0" d="M586.669,652.094L586.669,656.26C586.669,660.427,586.669,668.76,576.335,677.135C566.001,685.509,545.333,693.925,535,698.133L524.666,702.34"></path><path marker-end="url(#mermaid-svg-1_flowchart-v2-pointEnd)" style="" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" id="L_H_I1_0" d="M396.961,738.333L349.134,745.459C301.307,752.586,205.654,766.84,157.827,777.467C110,788.094,110,795.094,110,798.594L110,802.094"></path><path marker-end="url(#mermaid-svg-1_flowchart-v2-pointEnd)" style="" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" id="L_H_I2_0" d="M399.948,756.094L390.842,760.26C381.735,764.427,363.521,772.76,354.414,780.427C345.307,788.094,345.307,795.094,345.307,798.594L345.307,802.094"></path><path marker-end="url(#mermaid-svg-1_flowchart-v2-pointEnd)" style="" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" id="L_H_I3_0" d="M517.973,756.094L527.08,760.26C536.187,764.427,554.401,772.76,563.508,780.427C572.615,788.094,572.615,795.094,572.615,798.594L572.615,802.094"></path><path marker-end="url(#mermaid-svg-1_flowchart-v2-pointEnd)" style="" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" id="L_H_I4_0" d="M520.961,738.262L569.237,745.401C617.512,752.539,714.063,766.816,762.339,777.455C810.615,788.094,810.615,795.094,810.615,798.594L810.615,802.094"></path></g><g class="edgeLabels"><g class="edgeLabel"><g transform="translate(0, 0)" class="label"><foreignObject height="0" width="0"><div class="labelBkg" xmlns="http://www.w3.org/1999/xhtml" style="background-color: rgba(232, 232, 232, 0.5); display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51); background-color: rgba(232, 232, 232, 0.8); text-align: center;"></span></div></foreignObject></g></g><g transform="translate(331.25260162353516, 417.09375)" class="edgeLabel"><g transform="translate(-8, -12)" class="label"><foreignObject height="24" width="16"><div class="labelBkg" xmlns="http://www.w3.org/1999/xhtml" style="background-color: rgba(232, 232, 232, 0.5); display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51); background-color: rgba(232, 232, 232, 0.8); text-align: center;"><p style="margin: 0px; background-color: rgba(232, 232, 232, 0.8);">是</p></span></div></foreignObject></g></g><g class="edgeLabel"><g transform="translate(0, 0)" class="label"><foreignObject height="0" width="0"><div class="labelBkg" xmlns="http://www.w3.org/1999/xhtml" style="background-color: rgba(232, 232, 232, 0.5); display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51); background-color: rgba(232, 232, 232, 0.8); text-align: center;"></span></div></foreignObject></g></g><g transform="translate(586.6692657470703, 353.09375)" class="edgeLabel"><g transform="translate(-8, -12)" class="label"><foreignObject height="24" width="16"><div class="labelBkg" xmlns="http://www.w3.org/1999/xhtml" style="background-color: rgba(232, 232, 232, 0.5); display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51); background-color: rgba(232, 232, 232, 0.8); text-align: center;"><p style="margin: 0px; background-color: rgba(232, 232, 232, 0.8);">否</p></span></div></foreignObject></g></g><g class="edgeLabel"><g transform="translate(0, 0)" class="label"><foreignObject height="0" width="0"><div class="labelBkg" xmlns="http://www.w3.org/1999/xhtml" style="background-color: rgba(232, 232, 232, 0.5); display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51); background-color: rgba(232, 232, 232, 0.8); text-align: center;"></span></div></foreignObject></g></g><g class="edgeLabel"><g transform="translate(0, 0)" class="label"><foreignObject height="0" width="0"><div class="labelBkg" xmlns="http://www.w3.org/1999/xhtml" style="background-color: rgba(232, 232, 232, 0.5); display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51); background-color: rgba(232, 232, 232, 0.8); text-align: center;"></span></div></foreignObject></g></g><g class="edgeLabel"><g transform="translate(0, 0)" class="label"><foreignObject height="0" width="0"><div class="labelBkg" xmlns="http://www.w3.org/1999/xhtml" style="background-color: rgba(232, 232, 232, 0.5); display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51); background-color: rgba(232, 232, 232, 0.8); text-align: center;"></span></div></foreignObject></g></g><g class="edgeLabel"><g transform="translate(0, 0)" class="label"><foreignObject height="0" width="0"><div class="labelBkg" xmlns="http://www.w3.org/1999/xhtml" style="background-color: rgba(232, 232, 232, 0.5); display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51); background-color: rgba(232, 232, 232, 0.8); text-align: center;"></span></div></foreignObject></g></g><g class="edgeLabel"><g transform="translate(0, 0)" class="label"><foreignObject height="0" width="0"><div class="labelBkg" xmlns="http://www.w3.org/1999/xhtml" style="background-color: rgba(232, 232, 232, 0.5); display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51); background-color: rgba(232, 232, 232, 0.8); text-align: center;"></span></div></foreignObject></g></g><g class="edgeLabel"><g transform="translate(0, 0)" class="label"><foreignObject height="0" width="0"><div class="labelBkg" xmlns="http://www.w3.org/1999/xhtml" style="background-color: rgba(232, 232, 232, 0.5); display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51); background-color: rgba(232, 232, 232, 0.8); text-align: center;"></span></div></foreignObject></g></g><g class="edgeLabel"><g transform="translate(0, 0)" class="label"><foreignObject height="0" width="0"><div class="labelBkg" xmlns="http://www.w3.org/1999/xhtml" style="background-color: rgba(232, 232, 232, 0.5); display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51); background-color: rgba(232, 232, 232, 0.8); text-align: center;"></span></div></foreignObject></g></g><g class="edgeLabel"><g transform="translate(0, 0)" class="label"><foreignObject height="0" width="0"><div class="labelBkg" xmlns="http://www.w3.org/1999/xhtml" style="background-color: rgba(232, 232, 232, 0.5); display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51); background-color: rgba(232, 232, 232, 0.8); text-align: center;"></span></div></foreignObject></g></g></g><g class="nodes"><g transform="translate(458.96093368530273, 35)" id="flowchart-A-0" class="node default"><rect height="54" width="124" y="-27" x="-62" style="" class="basic label-container"></rect><g transform="translate(-32, -12)" style="" class="label"><rect></rect><foreignObject height="24" width="64"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51);"><p style="margin: 0px;">问题现象</p></span></div></foreignObject></g></g><g transform="translate(458.96093368530273, 214.046875)" id="flowchart-B-1" class="node default"><polygon transform="translate(-102.046875,102.046875)" class="label-container" points="102.046875,0 204.09375,-102.046875 102.046875,-204.09375 0,-102.046875"></polygon><g transform="translate(-75.046875, -12)" style="" class="label"><rect></rect><foreignObject height="24" width="150.09375"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51);"><p style="margin: 0px;">MyBatis返回分页对象</p></span></div></foreignObject></g></g><g transform="translate(331.25260162353516, 521.09375)" id="flowchart-C-3" class="node default"><rect height="54" width="188" y="-27" x="-94" style="" class="basic label-container"></rect><g transform="translate(-64, -12)" style="" class="label"><rect></rect><foreignObject height="24" width="128"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51);"><p style="margin: 0px;">分页插件自动激活</p></span></div></foreignObject></g></g><g transform="translate(331.25260162353516, 625.09375)" id="flowchart-D-5" class="node default"><rect height="54" width="245.36459350585938" y="-27" x="-122.68229675292969" style="" class="basic label-container"></rect><g transform="translate(-92.68229675292969, -12)" style="" class="label"><rect></rect><foreignObject height="24" width="185.36459350585938"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51);"><p style="margin: 0px;">参数含pageNum/pageSize</p></span></div></foreignObject></g></g><g transform="translate(586.6692657470703, 417.09375)" id="flowchart-E-7" class="node default"><rect height="54" width="150.61458587646484" y="-27" x="-75.30729293823242" style="" class="basic label-container"></rect><g transform="translate(-45.30729293823242, -12)" style="" class="label"><rect></rect><foreignObject height="24" width="90.61458587646484"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51);"><p style="margin: 0px;">SQL执行异常</p></span></div></foreignObject></g></g><g transform="translate(586.6692657470703, 521.09375)" id="flowchart-F-9" class="node default"><rect height="54" width="162.25" y="-27" x="-81.125" style="" class="basic label-container"></rect><g transform="translate(-51.125, -12)" style="" class="label"><rect></rect><foreignObject height="24" width="102.25"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51);"><p style="margin: 0px;">Druid解析失败</p></span></div></foreignObject></g></g><g transform="translate(586.6692657470703, 625.09375)" id="flowchart-G-11" class="node default"><rect height="54" width="165.46875" y="-27" x="-82.734375" style="" class="basic label-container"></rect><g transform="translate(-52.734375, -12)" style="" class="label"><rect></rect><foreignObject height="24" width="105.46875"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51);"><p style="margin: 0px;">CTE+LIMIT语法</p></span></div></foreignObject></g></g><g transform="translate(458.96093368530273, 729.09375)" id="flowchart-H-13" class="node default"><rect height="54" width="124" y="-27" x="-62" style="" class="basic label-container"></rect><g transform="translate(-32, -12)" style="" class="label"><rect></rect><foreignObject height="24" width="64"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51);"><p style="margin: 0px;">解决方案</p></span></div></foreignObject></g></g><g transform="translate(110, 833.09375)" id="flowchart-I1-17" class="node default"><rect height="54" width="204" y="-27" x="-102" style="" class="basic label-container"></rect><g transform="translate(-72, -12)" style="" class="label"><rect></rect><foreignObject height="24" width="144"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51);"><p style="margin: 0px;">重命名分页参数字段</p></span></div></foreignObject></g></g><g transform="translate(345.30728912353516, 833.09375)" id="flowchart-I2-19" class="node default"><rect height="54" width="166.61458587646484" y="-27" x="-83.30729293823242" style="" class="basic label-container"></rect><g transform="translate(-53.30729293823242, -12)" style="" class="label"><rect></rect><foreignObject height="24" width="106.61458587646484"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51);"><p style="margin: 0px;">SQL添加包装层</p></span></div></foreignObject></g></g><g transform="translate(572.6145782470703, 833.09375)" id="flowchart-I3-21" class="node default"><rect height="54" width="188" y="-27" x="-94" style="" class="basic label-container"></rect><g transform="translate(-64, -12)" style="" class="label"><rect></rect><foreignObject height="24" width="128"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51);"><p style="margin: 0px;">显式清除分页设置</p></span></div></foreignObject></g></g><g transform="translate(810.6145782470703, 833.09375)" id="flowchart-I4-23" class="node default"><rect height="54" width="188" y="-27" x="-94" style="" class="basic label-container"></rect><g transform="translate(-64, -12)" style="" class="label"><rect></rect><foreignObject height="24" width="128"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel" style="fill: rgb(51, 51, 51); color: rgb(51, 51, 51);"><p style="margin: 0px;">禁用自动分页检测</p></span></div></foreignObject></g></g></g></g></g></svg>
+
+通过以上措施，可同时解决：
+
+1. 分页插件强制干预问题
+2. Druid SQL解析失败问题
+3. 参数设计与SQL兼容性问题
+4. 实际业务数据返回异常问题
 
 # Json
 
