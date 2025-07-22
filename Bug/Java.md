@@ -4,6 +4,167 @@
 
 此注解如果使用static，注册不了值
 
+## @Value和@ConfigurationProperties
+
+### 🧠 一、`@ConfigurationProperties` 注入配置字段的核心机制
+
+#### ✅ 支持的字段注入方式：
+
+- **非静态字段（推荐）**
+- **字段 + setter 方法**
+- **字段 + 构造函数（需要配合 `@ConstructorBinding`）**
+
+#### ❌ 不支持的字段注入方式：
+
+- `static` 字段 ❌
+- `final` 字段 ❌
+- 没有 setter 方法的字段 ❌
+
+---
+
+### 🧠 二、为什么 `static` 字段不能直接注入？
+
+- Spring 的 `@ConfigurationProperties` 是通过 **实例的 setter 方法注入值** 的。
+- `static` 字段属于类，不属于实例对象。
+- 即使写了 setter 方法，如果字段是 `static`，Spring 也不会识别。
+
+---
+
+### 🧠 三、为什么 [RuoYiConfig.java](file://E:\Project\Picture\Code\Picture\picture-common\src\main\java\com\lz\common\config\RuoYiConfig.java) 的 `static` 字段能正常赋值？
+
+因为：
+
+```java
+private String profile;
+
+public void setProfile(String profile) {
+    RuoYiConfig.profile = profile;
+}
+```
+
+
+- ✅ 字段是 **非 static**
+- ✅ setter 方法中 **手动赋值给 static 变量**
+- ✅ Spring 注入的是实例字段，setter 被调用后赋值给 static 变量
+
+> 这是推荐的做法：**字段非 static，setter 中赋值给 static 变量**
+
+---
+
+### 🧠 四、如何在工具类、异步任务等非 Bean 中访问配置值？
+
+### ✅ 推荐做法：
+
+```java
+@Component
+@ConfigurationProperties(prefix = "aliyun")
+@Data
+public class OssConfig {
+
+    private String accessKeyId;
+    private String accessKeySecret;
+    private String bucket;
+    private String dir;
+    private String endpoint;
+    private String region;
+    private String dnsUrl;
+
+    private static OssConfig staticConfig;
+
+    @PostConstruct
+    public void init() {
+        staticConfig = this;
+    }
+
+    public static String getDnsUrl() {
+        return staticConfig.dnsUrl;
+    }
+}
+```
+
+
+通过 [@PostConstruct](file://jakarta\annotation\PostConstruct.java#L2-L6) 把注入后的实例保存为 `static`，提供静态访问方法。
+
+---
+
+### 🧠 五、Spring 注入字段的完整流程
+
+1. Spring 创建 [OssConfig](file://E:\Project\Picture\Code\Picture\picture-common\src\main\java\com\lz\common\config\OssConfig.java#L18-L72) Bean
+2. Spring 调用 `setAccessKeyId(...)` 等方法注入配置
+3. [@PostConstruct](file://jakarta\annotation\PostConstruct.java#L2-L6) 被调用，将当前实例保存为 [staticConfig](file://E:\Project\Picture\Code\Picture\picture-common\src\main\java\com\lz\common\config\OssConfig.java#L31-L31)
+4. 静态方法如 [getDnsUrl()](file://E:\Project\Picture\Code\Picture\picture-common\src\main\java\com\lz\common\config\OssConfig.java#L38-L40) 可以通过 `staticConfig.dnsUrl` 获取注入后的值
+
+---
+
+### 🧠 六、Lombok 的 `@Data` 对 `static` 字段的影响
+
+- `@Data` 会为字段生成 `getter`、`setter`、`toString`、`equals` 等方法
+- **但不会为 `static` 字段生成 setter 方法**
+- 所以如果你的字段是 `static`，即使写了 `@Data`，注入也不会生效
+
+---
+
+### 🧠 七、`@Value` 与 `@ConfigurationProperties` 的区别
+
+| 特性         | `@Value`                              | `@ConfigurationProperties` |
+| ------------ | ------------------------------------- | -------------------------- |
+| 注入方式     | 单个字段注入                          | 整体对象注入               |
+| 支持 YAML    | ✅（需要配合 `PropertySourceFactory`） | ✅                          |
+| 支持嵌套结构 | ❌                                     | ✅                          |
+| 支持静态字段 | ❌                                     | ❌                          |
+| 推荐场景     | 简单字段注入                          | 配置类、多字段注入         |
+
+---
+
+### 🧠 八、配置类推荐写法（最佳实践）
+
+```java
+@Component
+@ConfigurationProperties(prefix = "aliyun")
+@PropertySource("classpath:application-config.yml")
+@Data
+public class OssConfig {
+
+    private String accessKeyId;
+    private String accessKeySecret;
+    private String bucket;
+    private String dir;
+    private String endpoint;
+    private String region;
+    private String dnsUrl;
+
+    private static OssConfig staticConfig;
+
+    @PostConstruct
+    public void init() {
+        staticConfig = this;
+    }
+
+    public static String getDnsUrl() {
+        return staticConfig.dnsUrl;
+    }
+}
+```
+
+
+---
+
+### 🧠 九、常见问题总结
+
+| 问题                                                         | 原因                                                         | 解决方式                                                     |
+| ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| `@ConfigurationProperties` 不注入值                          | 字段是 `static`                                              | 改为非 static，使用 `@Data`                                  |
+| [getDnsUrl()](file://E:\Project\Picture\Code\Picture\picture-common\src\main\java\com\lz\common\config\OssConfig.java#L38-L40) 为 `null` | [staticConfig](file://E:\Project\Picture\Code\Picture\picture-common\src\main\java\com\lz\common\config\OssConfig.java#L31-L31) 未初始化 | 使用 [@PostConstruct](file://jakarta\annotation\PostConstruct.java#L2-L6) 初始化 |
+| `@Data` 不生效                                               | 字段是 `static`                                              | 改为非 static                                                |
+| `NullPointerException`                                       | 静态访问字段时 Spring 未完成注入                             | 确保 [@PostConstruct](file://jakarta\annotation\PostConstruct.java#L2-L6) 被调用后才访问 |
+| 无法注入嵌套对象                                             | 未使用嵌套类                                                 | 使用嵌套类 + `@Data` + `@ConfigurationProperties`            |
+
+---
+
+### 🧠 十、总结一句话：
+
+> **Spring 的 `@ConfigurationProperties` 不支持直接注入 `static` 字段。推荐使用非 static 字段 + `@Data` 自动生成 setter + [@PostConstruct](file://jakarta\annotation\PostConstruct.java#L2-L6) 保存静态引用，从而实现静态访问配置值的能力。**
+
 
 
 ## @Autiwired和@Resource 
