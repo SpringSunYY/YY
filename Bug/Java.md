@@ -256,6 +256,133 @@ private AlipayPaymentConfig config;
 
 如果你当前已经知道 Bean 名为 `alipayPaymentConfig`，使用 [[@Resource](file://jakarta\annotation\Resource.java#L4-L23)](file://jakarta/annotation/Resource.java#L4-L23) 并显式指定 name 是没问题的。否则建议继续使用 `@Autowired`。
 
+
+
+## Spring AOP代理问题及解决方案
+
+### 问题描述
+
+在Spring框架中，当我们在同一个类内部直接调用带有AOP注解（如自定义缓存注解 [@CustomCacheable](file://E:\Project\Picture\Code\Picture\picture-common\src\main\java\com\lz\common\annotation\CustomCacheable.java#L11-L27)）的方法时，AOP代理不会生效。这是因为Spring AOP基于代理模式实现，只有通过Spring容器管理的Bean引用调用时才会触发AOP逻辑。
+
+例如在 [PictureInfoServiceImpl](file://E:\Project\Picture\Code\Picture\picture-picture\src\main\java\com\lz\picture\service\impl\PictureInfoServiceImpl.java#L82-L1486) 类中：
+```java
+@Override
+public UserPictureDetailInfoVo userSelectPictureInfoByPictureId(String pictureId, String userId) {
+    // 直接调用不会触发AOP代理
+    UserPictureDetailInfoVo userPictureDetailInfoVo = getUserPictureDetailInfoVo(pictureId);
+    // ...
+}
+```
+
+
+### 原因分析
+
+1. Spring的缓存注解（包括自定义的 [@CustomCacheable](file://E:\Project\Picture\Code\Picture\picture-common\src\main\java\com\lz\common\annotation\CustomCacheable.java#L11-L27)）是基于代理模式实现的
+2. 当使用 `this.getUserPictureDetailInfoVo()` 方式调用时，绕过了Spring代理，直接调用了目标方法
+3. 只有通过Spring容器管理的Bean引用调用时，才会触发AOP代理逻辑
+
+### 解决方案
+
+#### 方案一：自注入方式（推荐）
+
+在类中注入自身实例，通过注入的引用来调用需要AOP增强的方法：
+
+```java
+@Service
+public class PictureInfoServiceImpl extends ServiceImpl<PictureInfoMapper, PictureInfo> implements IPictureInfoService {
+    // 注入自身实例
+    @Resource
+    private PictureInfoServiceImpl self;
+    
+    @Override
+    public UserPictureDetailInfoVo userSelectPictureInfoByPictureId(String pictureId, String userId) {
+        // 通过self调用，这样会走AOP代理
+        UserPictureDetailInfoVo userPictureDetailInfoVo = self.getUserPictureDetailInfoVo(pictureId);
+        // ... 后续逻辑
+    }
+}
+```
+
+
+#### 方案二：使用ApplicationContext获取代理对象
+
+```java
+@Service
+public class PictureInfoServiceImpl extends ServiceImpl<PictureInfoMapper, PictureInfo> implements IPictureInfoService {
+    @Resource
+    private ApplicationContext applicationContext;
+    
+    private PictureInfoServiceImpl self;
+    
+    @PostConstruct
+    private void init() {
+        // 从ApplicationContext中获取当前Bean的代理对象
+        self = applicationContext.getBean(PictureInfoServiceImpl.class);
+    }
+    
+    @Override
+    public UserPictureDetailInfoVo userSelectPictureInfoByPictureId(String pictureId, String userId) {
+        // 通过self调用，这样会走AOP代理
+        UserPictureDetailInfoVo userPictureDetailInfoVo = self.getUserPictureDetailInfoVo(pictureId);
+        // ... 后续逻辑
+    }
+}
+```
+
+
+#### 方案三：使用AopContext获取当前代理
+
+首先需要在启动类或配置类上添加：
+```java
+@EnableAspectJAutoProxy(exposeProxy = true)
+@SpringBootApplication
+public class Application {
+    // ...
+}
+```
+
+
+然后在需要的地方使用：
+```java
+@Override
+public UserPictureDetailInfoVo userSelectPictureInfoByPictureId(String pictureId, String userId) {
+    // 通过AopContext获取当前代理对象
+    PictureInfoServiceImpl self = (PictureInfoServiceImpl) AopContext.currentProxy();
+    UserPictureDetailInfoVo userPictureDetailInfoVo = self.getUserPictureDetailInfoVo(pictureId);
+    // ... 后续逻辑
+}
+```
+
+
+#### 方案四：手动处理缓存逻辑
+
+如果上述方案不方便实施，可以在当前方法中手动处理缓存逻辑：
+
+```java
+private UserPictureDetailInfoVo getUserPictureDetailInfoVo(String pictureId) {
+    //手动设置缓存，这里基本内部调用，spring没有托管，所以需要手动设置缓存
+    String key = PICTURE_PICTURE_DETAIL + COMMON_SEPARATOR_CACHE + pictureId;
+    if (redisCache.hasKey(key)) {
+        return redisCache.getCacheObject(key);
+    }
+    // ... 执行业务逻辑
+    redisCache.setCacheObject(key, userPictureDetailInfoVo, PictureRedisConstants.PICTURE_PICTURE_DETAIL_EXPIRE_TIME, TimeUnit.MINUTES);
+    return userPictureDetailInfoVo;
+}
+```
+
+
+### 推荐做法
+
+推荐使用**自注入方式**，因为：
+
+1. 简单直接：只需要添加一个字段和注入即可
+2. 无需额外配置：不需要修改启动类或其他配置
+3. 清晰明了：代码意图明确，其他人容易理解
+4. 性能良好：Spring会正确处理循环依赖并提供代理对象
+
+这种方式能确保调用带有 [@CustomCacheable](file://E:\Project\Picture\Code\Picture\picture-common\src\main\java\com\lz\common\annotation\CustomCacheable.java#L11-L27) 注解的方法时能够触发缓存逻辑。
+
 # MP
 
 ## 实体类与数据库表映射异常
