@@ -383,7 +383,94 @@ private UserPictureDetailInfoVo getUserPictureDetailInfoVo(String pictureId) {
 
 这种方式能确保调用带有 [@CustomCacheable](file://E:\Project\Picture\Code\Picture\picture-common\src\main\java\com\lz\common\annotation\CustomCacheable.java#L11-L27) 注解的方法时能够触发缓存逻辑。
 
+
+
+## @ModelAttribute
+
+`@ModelAttribute` 注解的实现原理是基于 Spring MVC 的数据绑定机制。当一个方法被标记为 `@ModelAttribute` 时，Spring MVC 会在调用该方法之前或之后进行相应的数据绑定或数据准备工作。
+
+在方法参数上使用 `@ModelAttribute` 注解时，Spring MVC 将尝试将请求参数映射到注解指定的类型的对象上。它会根据请求参数的名字和方法参数对象的属性名进行匹配，并进行类型转换。如果有对应的setter方法，Spring MVC会尝试调用这些setter方法来为对象赋值。
+
+而在方法的返回值上使用 `@ModelAttribute` 注解时，Spring MVC 会将返回的对象添加到模型中，使得他们可以在视图中被访问。这样可以在控制器方法中预先准备一些数据，然后在视图中使用这些数据。
+
+总的来说，`@ModelAttribute` 注解的实现原理是基于 Spring MVC 的数据绑定和模型管理机制，它简化了控制器方法中的参数获取和数据准备过程，提高了开发效率。
+
+```java
+@GetMapping("/list/test")
+public JSONObject listTest(
+        @ModelAttribute SysUser user,
+        @RequestParam(name = "pageNo", defaultValue = "1") Integer pageNo,
+        @RequestParam(name = "pageSize", defaultValue = "10") Integer pageSize,
+        HttpServletRequest request
+) {
+```
+
+`@ModelAttribute` 注解用于将请求参数绑定到特定的方法参数或方法返回值上，或者将数据添加到模型中（在 Spring MVC 中，模型指的是控制器方法返回的对象或数据）。
+
+在控制器方法的参数上使用 `@ModelAttribute` 注解，可以将请求参数映射到指定的 Java 对象上，简化了获取和处理请求参数的过程。例如：
+
+```java
+@GetMapping("/user")
+public String getUserInfo(@ModelAttribute UserRequest userRequest, Model model) {
+    // 从请求参数中映射到UserRequest对象
+    // 进行相应的业务逻辑处理
+    return "userInfo";
+}
+```
+
+除此之外，`@ModelAttribute` 注解还可以用于方法的返回值，将返回的对象添加到模型中，以便在视图中使用。例如：
+
+```java
+@ModelAttribute
+public UserRequest defaultUserRequest() {
+    // 返回一个UserRequest对象，添加到模型中
+    return new UserRequest();
+}
+```
+
+在这个例子中，`defaultUserRequest` 方法返回的 `UserRequest` 对象会自动添加到模型中，可以在视图中直接访问。
+
+综上所述，`@ModelAttribute` 注解提供了一种方便的方式来处理请求参数和模型数据，简化了控制器方法中的参数获取和数据准备过程。
+
 # MP
+
+## scanBasePackages 和basePackages 
+
+@SpringBootApplication(exclude = {DataSourceAutoConfiguration.class},scanBasePackages = {"com.**.**"}) @MapperScan(basePackages = {"com.**.generate.mapper"})这个scanBasePackages 和basePackages 的区别
+
+`scanBasePackages` 和 `basePackages` 都是用于指定包扫描路径的属性，但它们的作用范围和使用场景有所不同。
+
+### `scanBasePackages`
+
+- **使用场景**：`scanBasePackages` 通常在 Spring Boot 应用程序的主类（即标注了 `@SpringBootApplication` 的类）中使用，用于指定组件扫描的基础包路径。
+- **作用范围**：`scanBasePackages` 指定的包路径将用于扫描所有的 Spring 组件，包括 `@Component`, `@Service`, `@Controller`, `@Repository` 等注解标注的类。
+
+### `basePackages`
+
+- **使用场景**：`basePackages` 通常在特定注解中使用，例如 `@MapperScan`, `@ComponentScan`, `@EntityScan` 等，用于指定特定类型组件的扫描路径。
+- **作用范围**：`basePackages` 只会影响到特定类型的组件。例如，在 `@MapperScan` 中使用 `basePackages` 将只会扫描 MyBatis 的 Mapper 接口。
+
+### 示例解释
+
+```java
+@SpringBootApplication(
+    exclude = {DataSourceAutoConfiguration.class},
+    scanBasePackages = {"com.**.**"}
+)
+@MapperScan(basePackages = {"com.**.generate.mapper"})
+public class Application {
+    public static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
+    }
+}
+```
+
+在上面的示例中：
+
+- `scanBasePackages = {"com.**.**"}`：指定了 Spring Boot 应用程序在启动时需要扫描的基础包路径，会扫描所有标注了 `@Component`, `@Service`, `@Controller`, `@Repository` 等注解的类。
+- `@MapperScan(basePackages = {"com.**.generate.mapper"})`：指定了 MyBatis 需要扫描的 Mapper 接口包路径，只会扫描这些路径下的 Mapper 接口。
+
+这样可以确保不同类型的组件可以根据需要在不同的包路径下进行扫描和管理。
 
 ## 实体类与数据库表映射异常
 
@@ -818,3 +905,21 @@ HashMap<Long, String> parse = JSON.parseObject(
 
 - **教训** JSON 反序列化时，默认类型推断可能与预期不一致，需通过 `TypeReference` 显式指定类型。
 - **改进点** 所有涉及 JSON 解析的地方，避免直接使用 `HashMap.class`，优先指定明确类型。
+
+
+
+# maven
+
+## maven无法下载文档
+
+```js
+mvn dependency:sources
+mvn dependency:resolve -Dclassifier=javadoc
+```
+
+
+
+## 证书检查
+
+-Dmaven.wagon.http.ssl.insecure=true -Dmaven.wagon.http.ssl.allowall=true
+
