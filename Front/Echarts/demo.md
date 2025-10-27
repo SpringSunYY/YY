@@ -366,7 +366,7 @@ export default {
     },
     height: {
       type: String,
-      default: '350px' // 默认高度
+      default: '100%'
     },
     // 自定义标题
     chartTitle: {
@@ -491,7 +491,7 @@ export default {
         grid: {
           left: 40,
           right: 40,
-          bottom: 100,
+          bottom: 40,
           top: 100,
           containLabel: true
         },
@@ -611,6 +611,7 @@ export default {
   overflow: hidden;
 }
 </style>
+
 ```
 
 
@@ -760,7 +761,8 @@ export default {
         values: [2220, 1682, 2791, 3000, 4090, 3230, 2910]
       })
     },
-    chartTitle: { type: String, default: 'bar-horizontal-charts' }
+    chartTitle: { type: String, default: 'bar-horizontal-charts' },
+    chartName: { type: String, default: '' }
   },
 
   data() {
@@ -853,19 +855,18 @@ export default {
           },
           // 自定义格式，将 Y 轴类目名作为标题
           formatter: function (params) {
-            const seriesName = params[0].seriesName || '产出';
             const categoryName = params[0].name;
             const value = params[0].value;
 
             return `
                 <div style="font-size: 16px; font-weight: bold; margin-bottom: 5px;">${categoryName}</div>
-                ${params[0].marker} ${seriesName}: ${value}
+                ${params[0].marker} ${value}
             `;
           }
         },
         // ======================================
 
-        barWidth: 15,
+        barWidth: 10,
         grid: { // 增加 grid 属性以确保图表居中和留白
           left: '3%',
           right: '5%',
@@ -906,8 +907,8 @@ export default {
         },
         series: [{
           type: 'bar',
-          name: "产出",
-          barWidth: 45,
+          name: this.chartName,
+          barWidth: 20,
           itemStyle: {
             normal: {
               label: {
@@ -2764,7 +2765,8 @@ export default {
         values: [2220, 1682, 2791, 3000, 4090, 3230, 2910]
       })
     },
-    chartTitle: { type: String, default: 'simple-line-chart' }
+    chartTitle: { type: String, default: 'simple-line-chart' },
+    chartName: { type: String, default: 'simple-line-chart' }
   },
 
   data() {
@@ -2858,12 +2860,17 @@ export default {
           textStyle: {
             color: '#ccc'
           },
-          left:'2%'
+          left: '2%'
         },
         tooltip: {
           trigger: 'axis',
           axisPointer: {
-            type: 'cross',
+            type: 'cross'
+          },
+          backgroundColor: 'transparent', // 完全透明
+          borderWidth: 0,
+          textStyle: {
+            color: '#FFF'
           }
         },
         grid: {
@@ -2898,7 +2905,7 @@ export default {
         },
         series: [
           {
-            name: 'Weekly Data', // 系列名称
+            name: this.chartName, // 系列名称
             type: 'line',
             data: values,       // 动态数据：Y轴数值
             smooth: true,
@@ -4019,9 +4026,7 @@ const option = {
 </template>
 
 <script>
-import * as echarts from 'echarts';
-// 注意: 您需要在实际项目中导入 generateRandomColor
-import { generateRandomColor } from '@/utils/ruoyi.js'
+import * as echarts from 'echarts'
 
 export default {
   name: 'PieRoseCharts', // 组件名称设置为 PieRoseCharts
@@ -4038,7 +4043,7 @@ export default {
     },
     height: {
       type: String,
-      default: '300px' // 为饼图提供一个默认高度
+      default: '100%'
     },
     // ECharts 颜色列表
     defaultColor: {
