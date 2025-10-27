@@ -1,5 +1,963 @@
 # 柱形图
 
+## 3D立体饼图：Bar3DStereoscopicCharts
+
+![image-20251027164545640](assets/image-20251027164545640.png)
+
+### js
+
+```js
+// 核心输入数据
+const CHART_DATA = {
+    names: ['1月', '2月', '3月', '4月', '5月', '6月', '7月'],
+    values: [210.9, 260.8, 204.2, 504.9, 740.5, 600.3, 119.0]
+};
+
+// --- 动态计算 Y 轴的最大值和背景高度 (确保刻度均匀且自适应) ---
+
+const actualMaxValue = Math.max(...CHART_DATA.values, 0);
+
+// 1. 计算出所需的最小最大值 (740.5 * 1.2 = 888.6)
+const minMaxRequired = actualMaxValue * 1.2; 
+
+/**
+ * 动态计算 Y 轴的最大值，确保它是美观且均匀的刻度间隔的倍数。
+ * @param {number} value - 需要圆整的数值 (minMaxRequired)
+ * @param {number} ticks - 期望的主刻度数量（不包括 0）
+ * @returns {number} 经过圆整后的 Y 轴最大值
+ */
+function calculateRoundedMax(value, ticks = 5) {
+    if (value === 0) return 1;
+
+    // 粗略计算间隔（例如 888.6 / 5 ≈ 177.72）
+    const roughInterval = value / ticks;
+    
+    // 找到最接近的 10 的幂次作为基数（例如 177.72 -> 100）
+    const powerOfTen = Math.pow(10, Math.floor(Math.log10(roughInterval)));
+    
+    // 检查粗略间隔是基数的 1, 2, 5 倍中最接近且大于它的圆整数
+    const rounders = [1, 2, 5, 10];
+    let roundedInterval;
+    
+    for (const r of rounders) {
+        roundedInterval = r * powerOfTen;
+        // 如果圆整后的间隔大于粗略间隔，则使用它
+        if (roundedInterval >= roughInterval) {
+            break;
+        }
+    }
+    
+    // 用圆整后的间隔，计算最终的 max 值 (例如 888.6 / 200 = 4.443 -> ceil(4.443) = 5 -> 5 * 200 = 1000)
+    return Math.ceil(value / roundedInterval) * roundedInterval;
+}
+
+const MAX_Y_VALUE = calculateRoundedMax(minMaxRequired); 
+// 对于 888.6，计算出的圆整间隔是 200，MAX_Y_VALUE 结果是 1000。
+
+// 背景柱的高度数组
+const MAX_DATA = CHART_DATA.values.map(() => MAX_Y_VALUE);
+const VALUE_DATA = CHART_DATA.values;
+
+// 定义渐变色
+const mainColorGradient = new echarts.graphic.LinearGradient(1, 1, 1, 0, [
+    { offset: 0, color: " #0097C8" },
+    { offset: 1, color: "#4CF0F9" },
+]);
+
+// --- 立方体图形定义 ---
+
+// 绘制左侧面 (CubeLeft)
+const CubeLeft = echarts.graphic.extendShape({
+    shape: { x: 0, y: 0 },
+    buildPath: function (ctx, shape) {
+        const xAxisPoint = shape.xAxisPoint;
+        const c0 = [shape.x, shape.y];
+        const c1 = [shape.x - 13, shape.y - 13];
+        const c2 = [xAxisPoint[0] - 13, xAxisPoint[1] - 13];
+        const c3 = [xAxisPoint[0], xAxisPoint[1]];
+        ctx.moveTo(c0[0], c0[1]).lineTo(c1[0], c1[1]).lineTo(c2[0], c2[1]).lineTo(c3[0], c3[1]).closePath();
+    }
+});
+
+// 绘制右侧面 (CubeRight)
+const CubeRight = echarts.graphic.extendShape({
+    shape: { x: 0, y: 0 },
+    buildPath: function (ctx, shape) {
+        const xAxisPoint = shape.xAxisPoint;
+        const c1 = [shape.x, shape.y];
+        const c2 = [xAxisPoint[0], xAxisPoint[1]];
+        const c3 = [xAxisPoint[0] + 18, xAxisPoint[1] - 9];
+        const c4 = [shape.x + 18, shape.y - 9];
+        ctx.moveTo(c1[0], c1[1]).lineTo(c2[0], c2[1]).lineTo(c3[0], c3[1]).lineTo(c4[0], c4[1]).closePath();
+    }
+});
+
+// 绘制顶面 (CubeTop)
+const CubeTop = echarts.graphic.extendShape({
+    shape: { x: 0, y: 0 },
+    buildPath: function (ctx, shape) {
+        const c1 = [shape.x, shape.y];
+        const c2 = [shape.x + 18, shape.y - 9];
+        const c3 = [shape.x + 5, shape.y - 22];
+        const c4 = [shape.x - 13, shape.y - 13];
+        ctx.moveTo(c1[0], c1[1]).lineTo(c2[0], c2[1]).lineTo(c3[0], c3[1]).lineTo(c4[0], c4[1]).closePath();
+    }
+});
+
+// 注册图形
+echarts.graphic.registerShape('CubeLeft', CubeLeft);
+echarts.graphic.registerShape('CubeRight', CubeRight);
+echarts.graphic.registerShape('CubeTop', CubeTop);
+
+// --- ECharts 配置项 ---
+const option = {
+    title: {
+        text: '3D 立方柱状图',
+        x: 'center',
+        textStyle: {
+            color: '#fff',
+            fontSize: 20
+        }
+    },
+    backgroundColor: 'rgba(17, 42, 62, 1)',
+    tooltip: {
+        trigger: 'axis',
+        axisPointer: {
+            type: 'shadow'
+        },
+        backgroundColor: 'transparent',
+        borderWidth: 0,
+        textStyle: {
+            color: '#FFF'
+        },
+        formatter: function (params) {
+            const item = params.find(p => p.seriesIndex === 1); 
+            if (item) {
+                return item.name + ' : ' + item.value;
+            }
+            return '';
+        }
+    },
+    grid: {
+        left: 40,
+        right: 40,
+        bottom: 100,
+        top: 100,
+        containLabel: true
+    },
+    xAxis: {
+        type: 'category',
+        data: CHART_DATA.names,
+        axisLine: {
+            show: true,
+            lineStyle: {
+                color: 'white'
+            }
+        },
+        offset: 25,
+        axisTick: {
+            show: false,
+            length: 9,
+            alignWithLabel: true,
+            lineStyle: {
+                color: '#7DFFFD'
+            }
+        },
+        axisLabel: {
+            show: true,
+            fontSize: 16
+        },
+    },
+    yAxis: {
+        min: 0,
+        max: MAX_Y_VALUE, // 使用自适应计算的最大值 (1000)
+        type: 'value',
+        // ECharts 会自动根据 max=1000 和默认设置生成均匀刻度
+        axisLine: {
+            show: false,
+            lineStyle: {
+                color: 'white'
+            }
+        },
+        splitLine: {
+            show: true,
+            lineStyle: {
+                type: "dashed",
+                color: "rgba(255,255,255,0.1)"
+            },
+        },
+        axisTick: {
+            show: false
+        },
+        axisLabel: {
+            show: true,
+            fontSize: 16,
+        },
+        boundaryGap: ['20%', '20%']
+    },
+    series: [
+        // Series 0: 背景柱 (MAX)
+        {
+            type: 'custom',
+            renderItem: function (params, api) {
+                const location = api.coord([api.value(0), api.value(1)]);
+                return {
+                    type: 'group',
+                    children: [{
+                        type: 'CubeLeft',
+                        shape: { api, x: location[0], y: location[1], xAxisPoint: api.coord([api.value(0), 0]) },
+                        style: { fill: '#18385A' }
+                    }, {
+                        type: 'CubeRight',
+                        shape: { api, x: location[0], y: location[1], xAxisPoint: api.coord([api.value(0), 0]) },
+                        style: { fill: '#33718E' }
+                    }, {
+                        type: 'CubeTop',
+                        shape: { api, x: location[0], y: location[1] },
+                        style: { fill: '#307E8E' }
+                    }]
+                };
+            },
+            data: MAX_DATA
+        }, 
+        // Series 1: 实际值柱 (VALUE)
+        {
+            type: 'custom',
+            renderItem: (params, api) => {
+                const location = api.coord([api.value(0), api.value(1)]);
+                const isLastTwoBars = api.value(0) === VALUE_DATA.length - 2 || api.value(0) === VALUE_DATA.length - 1;
+                
+                const color = isLastTwoBars ? 'red' : mainColorGradient;
+
+                return {
+                    type: 'group',
+                    children: [{
+                        type: 'CubeLeft',
+                        shape: { api, x: location[0], y: location[1], xAxisPoint: api.coord([api.value(0), 0]) },
+                        style: { fill: color }
+                    }, {
+                        type: 'CubeRight',
+                        shape: { api, x: location[0], y: location[1], xAxisPoint: api.coord([api.value(0), 0]) },
+                        style: { fill: color }
+                    }, {
+                        type: 'CubeTop',
+                        shape: { api, x: location[0], y: location[1] },
+                        style: { fill: color }
+                    }]
+                };
+            },
+            data: VALUE_DATA
+        }, 
+        // Series 2: 透明柱 (Tooltip Trigger)
+        {
+            type: 'bar',
+            itemStyle: {
+                color: 'transparent',
+            },
+            data: MAX_DATA
+        }
+    ]
+};
+```
+
+### vue2
+
+```js
+<template>
+  <div :class="className" :style="{ height, width }" ref="chartRef"></div>
+</template>
+
+<script>
+// 确保您已安装并引入 ECharts 库，例如: import * as echarts from 'echarts';
+import * as echarts from 'echarts';
+
+// --- ECharts 自定义图形注册 (Custom Shapes) ---
+
+// 绘制左侧面 (Draw the left face of the cube)
+const CubeLeft = echarts.graphic.extendShape({
+  shape: { x: 0, y: 0 },
+  buildPath: function (ctx, shape) {
+    const xAxisPoint = shape.xAxisPoint;
+    const c0 = [shape.x, shape.y];
+    const c1 = [shape.x - 13, shape.y - 13];
+    const c2 = [xAxisPoint[0] - 13, xAxisPoint[1] - 13];
+    const c3 = [xAxisPoint[0], xAxisPoint[1]];
+    ctx.moveTo(c0[0], c0[1]).lineTo(c1[0], c1[1]).lineTo(c2[0], c2[1]).lineTo(c3[0], c3[1]).closePath();
+  }
+});
+
+// 绘制右侧面 (Draw the right face of the cube)
+const CubeRight = echarts.graphic.extendShape({
+  shape: { x: 0, y: 0 },
+  buildPath: function (ctx, shape) {
+    const xAxisPoint = shape.xAxisPoint;
+    const c1 = [shape.x, shape.y];
+    const c2 = [xAxisPoint[0], xAxisPoint[1]];
+    const c3 = [xAxisPoint[0] + 18, xAxisPoint[1] - 9];
+    const c4 = [shape.x + 18, shape.y - 9];
+    ctx.moveTo(c1[0], c1[1]).lineTo(c2[0], c2[1]).lineTo(c3[0], c3[1]).lineTo(c4[0], c4[1]).closePath();
+  }
+});
+
+// 绘制顶面 (Draw the top face of the cube)
+const CubeTop = echarts.graphic.extendShape({
+  shape: { x: 0, y: 0 },
+  buildPath: function (ctx, shape) {
+    const c1 = [shape.x, shape.y];
+    const c2 = [shape.x + 18, shape.y - 9];
+    const c3 = [shape.x + 5, shape.y - 22];
+    const c4 = [shape.x - 13, shape.y - 13];
+    ctx.moveTo(c1[0], c1[1]).lineTo(c2[0], c2[1]).lineTo(c3[0], c3[1]).lineTo(c4[0], c4[1]).closePath();
+  }
+});
+
+// 全局注册三个面图形，确保组件加载时已注册
+echarts.graphic.registerShape('CubeLeft', CubeLeft);
+echarts.graphic.registerShape('CubeRight', CubeRight);
+echarts.graphic.registerShape('CubeTop', CubeTop);
+
+// --- 刻度计算函数 ---
+
+/**
+ * 动态计算 Y 轴的最大值，确保它是美观且均匀的刻度间隔的倍数。
+ * @param {number} value - 需要圆整的数值 (minMaxRequired)
+ * @param {number} ticks - 期望的主刻度数量（不包括 0）
+ * @returns {number} 经过圆整后的 Y 轴最大值
+ */
+function calculateRoundedMax(value, ticks = 5) {
+  if (value === 0) return 1;
+
+  // 粗略计算间隔
+  const roughInterval = value / ticks;
+
+  // 找到最接近的 10 的幂次作为基数
+  const powerOfTen = Math.pow(10, Math.floor(Math.log10(roughInterval)));
+
+  // 检查圆整数：1, 2, 5, 10 倍
+  const rounders = [1, 2, 5, 10];
+  let roundedInterval;
+
+  for (const r of rounders) {
+    roundedInterval = r * powerOfTen;
+    // 如果圆整后的间隔大于粗略间隔，则使用它
+    if (roundedInterval >= roughInterval) {
+      break;
+    }
+  }
+
+  // 用圆整后的间隔，计算最终的 max 值
+  return Math.ceil(value / roundedInterval) * roundedInterval;
+}
+
+
+// --- Vue 组件定义 ---
+export default {
+  name: 'Bar3DStereoscopicCharts', // 组件名称
+
+  // 定义 Props
+  props: {
+    className: {
+      type: String,
+      default: 'chart'
+    },
+    width: {
+      type: String,
+      default: '100%'
+    },
+    height: {
+      type: String,
+      default: '350px' // 默认高度
+    },
+    // 自定义标题
+    chartTitle: {
+      type: String,
+      default: 'bar-horizontal-charts'
+    },
+    // 核心图表数据，包含 names (x轴) 和 values (y轴)
+    chartData: {
+      type: Object,
+      default: () => ({
+        names: ['1月', '2月', '3月', '4月', '5月', '6月', '7月'],
+        values: [210.9, 260.8, 204.2, 504.9, 740.5, 600.3, 119.0]
+      })
+    }
+  },
+
+  data() {
+    return {
+      chart: null, // ECharts 实例
+    };
+  },
+
+  watch: {
+    // 深度侦听 chartData 的变化，如果数据更新，则重绘图表
+    chartData: {
+      deep: true,
+      handler(val) {
+        this.setOptions(val);
+      }
+    },
+    // 侦听标题变化
+    chartTitle: {
+      handler() {
+        this.setOptions(this.chartData);
+      }
+    }
+  },
+
+  mounted() {
+    this.$nextTick(() => {
+      this.initChart();
+      // 监听窗口大小变化以适应图表
+      window.addEventListener('resize', this.handleResize);
+    });
+  },
+
+  beforeDestroy() {
+    window.removeEventListener('resize', this.handleResize);
+    if (this.chart) {
+      this.chart.dispose();
+      this.chart = null;
+    }
+  },
+
+  methods: {
+    /**
+     * 初始化图表实例
+     */
+    initChart() {
+      if (!this.$refs.chartRef) return;
+
+      if (this.chart) {
+        this.chart.dispose();
+        this.chart = null;
+      }
+
+      this.chart = echarts.init(this.$refs.chartRef);
+      this.setOptions(this.chartData);
+    },
+
+    /**
+     * 设置 ECharts 配置项并渲染图表
+     * @param {Object} data - 从 this.chartData 传入的数据 { names: [], values: [] }
+     */
+    setOptions(data) {
+      if (!this.chart || !data || !data.values || data.values.length === 0) return;
+
+      // --- 动态数据计算 ---
+      const actualMaxValue = Math.max(...data.values, 0);
+
+      // 1. 计算出所需的最小最大值 (Max * 1.2)
+      const minMaxRequired = actualMaxValue * 1.2;
+
+      // 2. 使用动态函数计算美观的 MAX_Y_VALUE (例如 888.6 -> 1000)
+      const MAX_Y_VALUE = calculateRoundedMax(minMaxRequired);
+
+      // 背景（最大高度）数组
+      const MAX_DATA = data.values.map(() => MAX_Y_VALUE);
+      const VALUE_DATA = data.values;
+
+      // 定义渐变色
+      const mainColorGradient = new echarts.graphic.LinearGradient(1, 1, 1, 0, [
+        { offset: 0, color: " #0097C8" }, // 底部
+        { offset: 1, color: "#4CF0F9" }, // 顶部
+      ]);
+
+      // --- ECharts Option ---
+      const option = {
+        // === 标题，使用 chartTitle prop ===
+        title: {
+          text: this.chartTitle,
+          x: 'center',
+          textStyle: {
+            color: '#fff',
+            fontSize: 20
+          }
+        },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: { type: 'shadow' },
+          backgroundColor: 'transparent',
+          borderWidth: 0,
+          textStyle: { color: '#FFF' },
+          formatter: function (params) {
+            const item = params.find(p => p.seriesIndex === 1);
+            if (item) {
+              return item.name + ' : ' + item.value;
+            }
+            return '';
+          }
+        },
+        grid: {
+          left: 40,
+          right: 40,
+          bottom: 100,
+          top: 100,
+          containLabel: true
+        },
+        xAxis: {
+          type: 'category',
+          data: data.names, // 使用传入的 names
+          axisLine: {
+            show: true,
+            lineStyle: { color: 'white' }
+          },
+          offset: 25,
+          axisTick: {
+            show: false,
+            length: 9,
+            alignWithLabel: true,
+            lineStyle: { color: '#7DFFFD' }
+          },
+          axisLabel: {
+            show: true,
+            fontSize: 16
+          },
+        },
+        yAxis: {
+          min: 0,
+          max: MAX_Y_VALUE, // 动态设置美观的最大值
+          type: 'value',
+          axisLine: { show: false, lineStyle: { color: 'white' } },
+          splitLine: {
+            show: true,
+            lineStyle: { type: "dashed", color: "rgba(255,255,255,0.1)" },
+          },
+          axisTick: { show: false },
+          axisLabel: { show: true, fontSize: 16 },
+          boundaryGap: ['20%', '20%']
+        },
+        series: [
+          // 0. 背景柱 (MAX) - 灰色
+          {
+            type: 'custom',
+            renderItem: function (params, api) {
+              const location = api.coord([api.value(0), api.value(1)]);
+              return {
+                type: 'group',
+                children: [{
+                  type: 'CubeLeft',
+                  shape: { api, x: location[0], y: location[1], xAxisPoint: api.coord([api.value(0), 0]) },
+                  style: { fill: '#18385A' }
+                }, {
+                  type: 'CubeRight',
+                  shape: { api, x: location[0], y: location[1], xAxisPoint: api.coord([api.value(0), 0]) },
+                  style: { fill: '#33718E' }
+                }, {
+                  type: 'CubeTop',
+                  shape: { api, x: location[0], y: location[1] },
+                  style: { fill: '#307E8E' }
+                }]
+              };
+            },
+            data: MAX_DATA
+          },
+          // 1. 实际值柱 (VALUE) - 渐变色或红色
+          {
+            type: 'custom',
+            renderItem: (params, api) => {
+              const location = api.coord([api.value(0), api.value(1)]);
+              // 根据当前索引判断是否是最后两项
+              const isLastTwoBars = api.value(0) === VALUE_DATA.length - 2 || api.value(0) === VALUE_DATA.length - 1;
+
+              const color = isLastTwoBars ? 'red' : mainColorGradient;
+
+              return {
+                type: 'group',
+                children: [{
+                  type: 'CubeLeft',
+                  shape: { api, x: location[0], y: location[1], xAxisPoint: api.coord([api.value(0), 0]) },
+                  style: { fill: color }
+                }, {
+                  type: 'CubeRight',
+                  shape: { api, x: location[0], y: location[1], xAxisPoint: api.coord([api.value(0), 0]) },
+                  style: { fill: color }
+                }, {
+                  type: 'CubeTop',
+                  shape: { api, x: location[0], y: location[1] },
+                  style: { fill: color }
+                }]
+              };
+            },
+            data: VALUE_DATA
+          },
+          // 2. 透明柱 (MAX) - 用于触发 tooltip
+          {
+            type: 'bar',
+            itemStyle: {
+              color: 'transparent',
+            },
+            data: MAX_DATA
+          }
+        ]
+      };
+
+      this.chart.setOption(option, true);
+    },
+
+    /**
+     * 处理窗口大小变化，重绘图表
+     */
+    handleResize() {
+      this.chart?.resize();
+    }
+  }
+};
+</script>
+
+<style scoped>
+.chart {
+  /* 确保容器有高度才能显示图表 */
+  overflow: hidden;
+}
+</style>
+```
+
+
+
+## 横向柱形图：BarHorizontalCharts
+
+![image-20251027154603614](assets/image-20251027154603614.png)
+
+### js
+
+```js
+// 您的新数据
+const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const values = [2220, 1682, 2791, 3000, 4090, 3230, 2910];
+
+option = {
+    backgroundColor: "#0f375f",
+    // === 修改：配置 tooltip (工具提示) ===
+    tooltip: {
+        trigger: 'axis', // 坐标轴触发
+        axisPointer: {
+            type: 'shadow' // 阴影指示器，适用于柱状图
+        },
+        // 1. 设置背景为半透明深色
+        backgroundColor: 'rgba(30, 30, 30, 0.7)', 
+        borderWidth: 0, // 移除边框
+        padding: [10, 15],
+        textStyle: {
+            color: '#fff', // 文本颜色设为白色
+        },
+        // 2. 自定义提示框内容格式，加入 title
+        formatter: function (params) {
+            const seriesName = params[0].seriesName || '值';
+            const categoryName = params[0].name; // Y轴的类目名称，用作标题
+            const value = params[0].value;    // X轴的数值
+
+            let html = `
+                <div style="font-size: 16px; font-weight: bold; margin-bottom: 5px;">${categoryName}</div>
+                ${params[0].marker} ${seriesName}: ${value}
+            `;
+            return html;
+        }
+    },
+    // ======================================
+    barWidth: 15,
+    xAxis: {
+        type: 'value',
+        splitLine: {
+            lineStyle: {
+                color: "rgba(255,255,255,0.2)",
+                type: 'dashed'
+            }
+        },
+        axisTick: {
+            show: false
+        },
+        axisLabel: {
+            textStyle: {
+                color: "rgba(250,250,250,0.6)",
+                fontSize: 16
+            }
+        }
+    },
+    yAxis: {
+        type: 'category',
+        data: names,
+        splitLine: {
+            show: false
+        },
+        axisTick: {
+            show: false
+        },
+        axisLine: {
+            lineStyle: {
+                color: '#2c4054'
+            }
+        },
+        axisLabel: {
+            textStyle: {
+                color: "rgba(250,250,250,0.6)",
+                fontSize: 16
+            }
+        }
+    },
+    series: [{
+        type: 'bar',
+        name: "产出",
+        barWidth: 45,
+        itemStyle: {
+            normal: {
+                label: {
+                    show: true, 
+                    position: "insideRight", 
+                    textStyle: {
+                        color: "#FFFFFF",
+                        fontSize: 16,
+                        fontWeight: 600
+                    }
+                },
+                color: new echarts.graphic.LinearGradient(1, 0, 0, 0, [{
+                    offset: 0,
+                    color: 'rgba(24,144,255,1)'
+                }, {
+                    offset: 1,
+                    color: 'rgba(24,144,255,0)'
+                }]),
+                barBorderRadius: 15
+            }
+        },
+        data: values
+    }]
+};
+```
+
+### vue2
+
+```js
+<template>
+  <div :class="className" :style="{ height, width }" ref="chartRef"></div>
+</template>
+
+<script>
+// 引入 ECharts 核心模块
+import * as echarts from 'echarts';
+
+export default {
+  name: 'BarHorizontalCharts', // 组件名称设置为 BarHorizontalCharts
+
+  props: {
+    className: {
+      type: String,
+      default: 'chart'
+    },
+    width: {
+      type: String,
+      default: '100%'
+    },
+    height: {
+      type: String,
+      default: '100%'
+    },
+    // 核心数据：包含 names (Y轴类目) 和 values (X轴数值)
+    chartData: {
+      type: Object,
+      default: () => ({
+        names: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+        values: [2220, 1682, 2791, 3000, 4090, 3230, 2910]
+      })
+    },
+    chartTitle: { type: String, default: 'bar-horizontal-charts' }
+  },
+
+  data() {
+    return {
+      chart: null // ECharts 实例
+    };
+  },
+
+  watch: {
+    // 深度侦听 chartData 的变化
+    chartData: {
+      deep: true,
+      handler(val) {
+        this.setOptions(val);
+      }
+    },
+    // 侦听容器宽高的变化
+    width() {
+      this.$nextTick(() => this.resizeChart());
+    },
+    height() {
+      this.$nextTick(() => this.resizeChart());
+    }
+  },
+
+  mounted() {
+    this.$nextTick(() => {
+      this.initChart();
+      window.addEventListener('resize', this.handleResize);
+    });
+  },
+
+  beforeDestroy() {
+    if (this.chart) {
+      this.chart.dispose();
+      this.chart = null;
+    }
+    window.removeEventListener('resize', this.handleResize);
+  },
+
+  methods: {
+    /**
+     * 初始化图表实例
+     */
+    initChart() {
+      if (!this.$refs.chartRef) return;
+
+      if (this.chart) {
+        this.chart.dispose();
+        this.chart = null;
+      }
+
+      this.chart = echarts.init(this.$refs.chartRef);
+      this.setOptions(this.chartData);
+    },
+
+    /**
+     * 设置 ECharts 配置项
+     * @param {Object} data - 从 this.chartData 传入的数据
+     */
+    setOptions(data) {
+      if (!this.chart) return;
+      if (!data || !data.names || !data.values) {
+        console.warn("ECharts: 传入的 chartData 无效。");
+        return;
+      }
+
+      const { names, values } = data;
+
+      const option = {
+        title: {
+          text: this.chartTitle,
+          textStyle: {
+            color: '#ccc'
+          },
+          left:'2%'
+        },
+        // === Tooltip 配置 (透明背景, 标题) ===
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: {
+            type: 'shadow'
+          },
+          // 设置背景为半透明深色
+          backgroundColor: 'rgba(30, 30, 30, 0.7)',
+          borderWidth: 0,
+          padding: [10, 15],
+          textStyle: {
+            color: '#fff',
+          },
+          // 自定义格式，将 Y 轴类目名作为标题
+          formatter: function (params) {
+            const seriesName = params[0].seriesName || '产出';
+            const categoryName = params[0].name;
+            const value = params[0].value;
+
+            return `
+                <div style="font-size: 16px; font-weight: bold; margin-bottom: 5px;">${categoryName}</div>
+                ${params[0].marker} ${seriesName}: ${value}
+            `;
+          }
+        },
+        // ======================================
+
+        barWidth: 15,
+        grid: { // 增加 grid 属性以确保图表居中和留白
+          left: '3%',
+          right: '5%',
+          bottom: '3%',
+          top: '10%',
+          containLabel: true
+        },
+        xAxis: {
+          type: 'value',
+          splitLine: {
+            lineStyle: {
+              color: "rgba(255,255,255,0.2)",
+              type: 'dashed'
+            }
+          },
+          axisTick: { show: false },
+          axisLabel: {
+            textStyle: {
+              color: "rgba(250,250,250,0.6)",
+              fontSize: 16
+            }
+          }
+        },
+        yAxis: {
+          type: 'category',
+          data: names, // 使用传入的 names
+          splitLine: { show: false },
+          axisTick: { show: false },
+          axisLine: {
+            lineStyle: { color: '#2c4054' }
+          },
+          axisLabel: {
+            textStyle: {
+              color: "rgba(250,250,250,0.6)",
+              fontSize: 16
+            }
+          }
+        },
+        series: [{
+          type: 'bar',
+          name: "产出",
+          barWidth: 45,
+          itemStyle: {
+            normal: {
+              label: {
+                show: true,
+                position: "insideRight",
+                textStyle: {
+                  color: "#FFFFFF",
+                  fontSize: 16,
+                  fontWeight: 600
+                }
+              },
+              // 渐变色配置
+              color: new echarts.graphic.LinearGradient(1, 0, 0, 0, [{
+                offset: 0,
+                color: 'rgba(24,144,255,1)'
+              }, {
+                offset: 1,
+                color: 'rgba(24,144,255,0)'
+              }]),
+              barBorderRadius: 15
+            }
+          },
+          data: values // 使用传入的 values
+        }]
+      };
+
+      // 应用配置项，使用 true 确保完全替换
+      this.chart.setOption(option, true);
+    },
+
+    /**
+     * 处理窗口大小变化，重绘图表
+     */
+    handleResize() {
+      this.chart?.resize();
+    }
+  }
+};
+</script>
+
+<style scoped>
+/* 确保图表容器有正确的布局 */
+.chart {
+  overflow: hidden;
+}
+</style>
+```
+
+
+
 ## 自动轮播折线柱形图-BarAutoCarouselCharts
 
 ![image-20250927191258105](assets/image-20250927191258105.png)
@@ -1668,6 +2626,332 @@ watch(
 
 # 折线图
 
+## 简单折线图：SimpleLineChart
+
+![image-20251027152712170](assets/image-20251027152712170.png)
+
+### js
+
+```js
+// 您的新数据
+const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const values = [2220, 1682, 2791, 3000, 4090, 3230, 2910];
+
+option = {
+   backgroundColor: '#30333C',
+   tooltip: {
+      trigger: 'axis', // 坐标轴触发
+      axisPointer: {
+         type: 'cross', // 十字准星指示器
+         label: {
+            backgroundColor: '#6a7985'
+         }
+      }
+   },
+   grid: {
+      left: "5%",
+      right: "5%",
+      bottom: "5%",
+      top: 90,
+      containLabel: true
+   },
+   // === X 轴修改 ===
+   xAxis: {
+      type: 'category', // 1. 类型改为 'category' (类目轴)
+      data: names,      // 2. data 使用 names 数组
+      boundaryGap: false, // 线图通常设置为 false，使线从边缘开始
+      axisTick: { // 隐藏刻度线
+         show: false
+      },
+      axisLine: { // X轴线样式
+         lineStyle: {
+            color: '#ccc'
+         }
+      },
+      axisLabel: { // X轴标签样式
+         color: '#ccc'
+      },
+      splitLine: { // X轴的分割线（网格线）- 在类目轴上通常不显示
+         show: false
+      }
+   },
+   // === Y 轴修改 ===
+   yAxis: {
+      type: 'value', // 类型为 'value' (数值轴)
+      min: 0,
+      // 让 ECharts 自动计算 interval 和 formatter
+      // interval: 250, // 移除，让 ECharts 自动适配新数据
+      splitLine: { // Y 轴的分割线
+         show: true,
+         lineStyle: {
+            color: '#4A4A4A', 
+            type: 'solid'
+         }
+      },
+      axisTick: { // 隐藏刻度线
+         show: false
+      },
+      axisLine: { // Y轴线样式
+         lineStyle: {
+            color: '#ccc'
+         }
+      },
+      axisLabel: { // Y轴标签样式
+         color: '#ccc'
+         // 移除了之前的 formatter，让 ECharts 自动显示标签
+      }
+   },
+   // === Series 修改 ===
+   series: [
+      {
+         name: 'Weekly Data', // 给系列加个名字，tooltip 会显示
+         type: 'line',
+         data: values, // 3. data 直接使用 values 数组
+         smooth: true,
+         lineStyle: {
+            color: '#38F0B4',
+            width: 3
+         },
+         // 显示数据点 (来自您上一个请求)
+         showSymbol: true, 
+         symbol: 'circle',
+         symbolSize: 8,
+         itemStyle: {
+            color: '#38F0B4',
+            borderColor: '#fff',
+            borderWidth: 2
+         },
+         // 区域填充样式 (来自您上一个请求)
+         areaStyle: {
+            opacity: 0.8,
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+               { offset: 0, color: '#00314F' },
+               { offset: 0.8, color: '#01676C' }
+            ])
+         }
+      }
+   ]
+};
+```
+
+### vue2
+
+```js
+<template>
+  <div :class="className" :style="{ height, width }" ref="chartRef"></div>
+</template>
+
+<script>
+// 引入 ECharts 核心模块
+import * as echarts from 'echarts'
+// 如果您需要主题，可以取消注释
+// import 'echarts/theme/macarons';
+
+export default {
+  name: 'SimpleLineChart',
+  props: {
+    className: { type: String, default: 'chart' },
+    width: { type: String, default: '100%' },
+    height: { type: String, default: '100%' },
+    autoResize: { type: Boolean, default: true },
+
+    // 核心图表数据，包含 names (x轴) 和 values (y轴)
+    chartData: {
+      type: Object,
+      // 默认数据，用于在父组件未传入数据时显示
+      default: () => ({
+        names: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+        values: [2220, 1682, 2791, 3000, 4090, 3230, 2910]
+      })
+    },
+    chartTitle: { type: String, default: 'simple-line-chart' }
+  },
+
+  data() {
+    return {
+      chart: null // ECharts 实例
+    }
+  },
+
+  watch: {
+    // 深度侦听 chartData 对象的变化
+    chartData: {
+      deep: true,
+      handler(val) {
+        // 当数据变化时，重新设置 ECharts 配置项
+        this.setOptions(val)
+      }
+    },
+    // 侦听容器宽高的变化，用于响应式调整
+    width() {
+      this.$nextTick(() => this.resizeChart())
+    },
+    height() {
+      this.$nextTick(() => this.resizeChart())
+    }
+  },
+
+  mounted() {
+    // 1. 初始化图表
+    this.initChart()
+
+    // 2. 如果开启了 autoResize，添加窗口缩放监听
+    if (this.autoResize) {
+      window.addEventListener('resize', this.resizeChart)
+    }
+  },
+
+  beforeDestroy() {
+    // 1. 销毁 ECharts 实例，释放资源
+    if (this.chart) {
+      this.chart.dispose()
+      this.chart = null
+    }
+
+    // 2. 移除窗口缩放监听
+    if (this.autoResize) {
+      window.removeEventListener('resize', this.resizeChart)
+    }
+  },
+
+  methods: {
+    /**
+     * 初始化图表实例
+     */
+    initChart() {
+      // 使用 $nextTick 确保 DOM 已经渲染
+      this.$nextTick(() => {
+        // 检查 ref 是否存在
+        if (!this.$refs.chartRef) return
+
+        // 销毁可能存在的旧实例
+        if (this.chart) {
+          this.chart.dispose()
+          this.chart = null
+        }
+
+        // 初始化 ECharts 实例
+        this.chart = echarts.init(this.$refs.chartRef)
+
+        // 设置初始配置项
+        this.setOptions(this.chartData)
+      })
+    },
+
+    /**
+     * 设置 ECharts 配置项 (使用您提供的样式)
+     * @param {Object} data - 从 this.chartData 传入的数据
+     */
+    setOptions(data) {
+      if (!this.chart) return
+      if (!data || !data.names || !data.values) {
+        console.warn('ECharts: 传入的 chartData 无效。')
+        return
+      }
+
+      // 从传入的 data 中解构出 names 和 values
+      const { names, values } = data
+
+      const option = {
+        title: {
+          text: this.chartTitle,
+          textStyle: {
+            color: '#ccc'
+          },
+          left:'2%'
+        },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: {
+            type: 'cross',
+          }
+        },
+        grid: {
+          left: '5%',
+          right: '5%',
+          bottom: '5%',
+          top: 90,
+          containLabel: true
+        },
+        xAxis: {
+          type: 'category',
+          data: names,       // 动态数据：X轴类目
+          boundaryGap: false,
+          axisTick: { show: false },
+          axisLine: { lineStyle: { color: '#ccc' } },
+          axisLabel: { color: '#ccc' },
+          splitLine: { show: false }
+        },
+        yAxis: {
+          type: 'value',
+          min: 0,
+          splitLine: {
+            show: true,
+            lineStyle: {
+              color: '#4A4A4A',
+              type: 'solid'
+            }
+          },
+          axisTick: { show: false },
+          axisLine: { lineStyle: { color: '#ccc' } },
+          axisLabel: { color: '#ccc' }
+        },
+        series: [
+          {
+            name: 'Weekly Data', // 系列名称
+            type: 'line',
+            data: values,       // 动态数据：Y轴数值
+            smooth: true,
+            lineStyle: {
+              color: '#38F0B4',
+              width: 3
+            },
+            showSymbol: true,
+            symbol: 'circle',
+            symbolSize: 8,
+            itemStyle: {
+              color: '#38F0B4',
+              borderColor: '#fff',
+              borderWidth: 2
+            },
+            areaStyle: {
+              opacity: 0.8,
+              // 注意：在方法中必须使用导入的 echarts 变量来创建渐变
+              color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                { offset: 0, color: '#00314F' },
+                { offset: 0.8, color: '#01676C' }
+              ])
+            }
+          }
+        ]
+      }
+
+      // 应用配置项
+      this.chart.setOption(option, true) // true 表示不合并，完全替换
+    },
+
+    /**
+     * 响应式重绘图表
+     */
+    resizeChart() {
+      if (this.chart) {
+        this.chart.resize()
+      }
+    }
+  }
+}
+</script>
+
+<style scoped>
+/* 确保容器有尺寸 */
+.chart {
+  overflow: hidden;
+}
+</style>
+```
+
+
+
 ## zoom多条折线图-LineZoomCharts
 
 ![image-20250927191039832](assets/image-20250927191039832.png)
@@ -2342,6 +3626,643 @@ watch(
     {deep: true}
 )
 </script>
+```
+
+### vue2
+
+```js
+<template>
+  <div :class="className" :style="{ height, width }" ref="chartRef"/>
+</template>
+
+<script>
+// 1. 引入 ECharts 核心和主题
+import * as echarts from 'echarts'
+import 'echarts/theme/macarons' // 引入 'macarons' 主题
+
+import { generateRandomColor } from '@/utils/ruoyi.js'
+
+export default {
+  name: 'PieChart',
+
+  props: {
+    className: {
+      type: String,
+      default: 'chart'
+    },
+    width: {
+      type: String,
+      default: '100%'
+    },
+    height: {
+      type: String,
+      default: '100%'
+    },
+    chartName: {
+      type: String,
+      default: '饼图'
+    },
+    chartData: {
+      type: Array,
+      default: () => [
+        { name: 'YY', value: 100 },
+        { name: 'XC', value: 100 }
+      ]
+    },
+    defaultColor: {
+      type: Array,
+      default: () => [
+        '#5B8FF9', '#5AD8A6', '#5D7092', '#F6BD16', '#E86A92',
+        '#7262FD', '#269A29', '#8E36BE', '#41A7E2', '#7747A3',
+        '#FF7F50', '#FFDAB9', '#ADFF2F', '#00CED1', '#9370DB',
+        '#3CB371', '#FF69B4', '#FFB6C1', '#DA70D6', '#98FB98',
+        '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
+        '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9'
+      ]
+    }
+  },
+
+  data() {
+    return {
+      chart: null // ECharts 实例
+    }
+  },
+
+  watch: {
+    // 深度侦听 chartData 的变化
+    chartData: {
+      deep: true,
+      handler(newData) {
+        // 当数据变化时，重新初始化图表
+        this.initChart(newData)
+      }
+    }
+  },
+
+  mounted() {
+    // 使用 $nextTick 确保 DOM 已经渲染
+    this.$nextTick(() => {
+      this.initChart(this.chartData) // 使用 props 数据初始化
+      window.addEventListener('resize', this.handleResize)
+    })
+  },
+
+  beforeDestroy() {
+    // 销毁 ECharts 实例
+    if (this.chart) {
+      this.chart.dispose()
+      this.chart = null
+    }
+    // 移除窗口监听事件
+    window.removeEventListener('resize', this.handleResize)
+  },
+
+  methods: {
+    /**
+     * 计算数据总和
+     */
+    calculateTotal(data) {
+      return data.reduce((sum, item) => Number(sum) + (Number(item.value) || 0), 0)
+    },
+
+    /**
+     * 初始化图表
+     */
+    initChart(data) {
+      if (!data || !data.length) {
+        return
+      }
+
+      // 销毁已有实例
+      if (this.chart) {
+        this.chart.dispose()
+        this.chart = null
+      }
+
+      // 为数据项添加颜色
+      const coloredData = data.map(item => ({
+        ...item,
+        itemStyle: {
+          // 注意：这里调用的是导入的 generateRandomColor
+          color: generateRandomColor(this.defaultColor) // 使用 this.defaultColor
+        }
+      }))
+
+      // 计算总数
+      const total = this.calculateTotal(data)
+
+      // 初始化图表 (使用 this.$refs.chartRef)
+      this.chart = echarts.init(this.$refs.chartRef, 'macarons')
+
+      const option = {
+        title: {
+          text: this.chartName, // 使用 this.chartName
+          textStyle: {
+            fontSize: 16,
+            color: '#2e95f3'
+          },
+          top: '5%',
+          left: '2%'
+        },
+        tooltip: {
+          trigger: 'item',
+          // 格式化tooltip，添加总数显示
+          // 'total' 变量在 formatter 的闭包中是可用的
+          formatter: function(params) {
+            return `${params.seriesName} <br/>${params.name} : ${params.value} (${params.percent.toFixed(1)}%)<br/>总数: ${total}`
+          }
+        },
+        legend: {
+          left: 'center',
+          bottom: '10%',
+          textStyle: { fontSize: 14, color: '#ffffff' } // 原 legend 颜色
+        },
+        series: [
+          {
+            name: this.chartName, // 使用 this.chartName
+            type: 'pie',
+            roseType: 'radius',
+            top: '10%',
+            radius: [20, 95],
+            center: ['50%', '38%'],
+            label: {
+              formatter: '{b}',
+              textStyle: {
+                fontSize: 14,
+                color: '#2e95f3'
+              }
+            },
+            data: coloredData,
+            animationEasing: 'cubicInOut',
+            animationDuration: 2600
+          }
+        ]
+      }
+      this.chart.setOption(option)
+    },
+
+    /**
+     * 处理窗口大小变化，重绘图表
+     */
+    handleResize() {
+      if (this.chart) {
+        this.chart.resize()
+      }
+    }
+  }
+}
+</script>
+
+<style scoped>
+/* 可选：添加一个默认样式，确保 div 至少有基本布局 */
+.chart {
+  overflow: hidden;
+}
+</style>
+```
+
+## 玫瑰饼图：PieRoseCharts
+
+![image-20251027160200037](assets/image-20251027160200037.png)
+
+### js
+
+```js
+// =========================================================
+// 核心数据
+// =========================================================
+const pieData = [{
+    name: "加工成本",
+    value: 920,
+},
+{
+    name: "实验成本",
+    value: 458,
+},
+{
+    name: "能源成本",
+    value: 653,
+},
+{
+    name: "研发成本",
+    value: 372,
+}
+];
+
+// 饼图位置
+const pieCenter = ['35%', '50%']
+
+const option = {
+    backgroundColor: '#000',
+    color: [
+        '#FF6600',
+        '#28F2E6',
+        '#FFCC00',
+        '#00A1FF',
+        '#FF1F48',
+        '#FFEF00',
+        '#00E899',
+        '#006FFF',
+        '#73d0fd',
+        '#25C1F1',
+        '#C4F9F3',
+        '#E062AE',
+        '#8378EA',
+        '#C4F926',
+        '#FF5722',
+        '#ffd32a',
+        '#3c40c6',
+        '#ffa801',
+    ],
+    // === 修正 Tooltip: 背景改为完全透明 ===
+    tooltip: {
+        show: true,
+        trigger: 'item',
+        // 背景设置为完全透明
+        backgroundColor: 'transparent', 
+        borderWidth: 0, // 确保没有边框
+        textStyle: {
+            color: '#FFF' // 文本颜色仍然是白色，以保证可见性
+        },
+        formatter: "{b} <br/> 值: {c} ({d}%)", 
+    },
+    // ======================================
+    legend: {
+        show: true,
+        orient: 'vertical',
+        textStyle: {
+            color: '#FFF',
+        },
+        right: '5%', 
+        top: 'center', 
+        itemWidth: 10, 
+        itemHeight: 10, 
+        itemGap: 10,
+        formatter(name) {
+            return name; 
+        },
+    },
+    series: [
+        // 背景装饰0 实心白圆 层级最高zlevel: 4
+        {
+            type: 'pie',
+            zlevel: 4,
+            radius: ['0%', '7%'],
+            center: pieCenter,
+            silent: true,
+            clockwise: false,
+            label: {
+                show: false,
+            },
+            data: [{
+                name: null,
+                value: 0,
+                itemStyle: {
+                    color: '#FFF',
+                },
+            }],
+        },
+        // 背景装饰1 半透明圆 层级第二 zlevel: 3
+        {
+            type: 'pie',
+            radius: ['0%', '15%'],
+            center: pieCenter,
+            zlevel: 3,
+            silent: true,
+            clockwise: false,
+            label: {
+                show: false,
+            },
+            data: [{
+                name: null,
+                value: 0,
+                itemStyle: {
+                    color: 'rgba(255,255,255, 0.3)',
+                },
+            }],
+        },
+        // 背景装饰3 半透明圆 层级最低 作为底盘 zlevel: 1
+        {
+            type: 'pie',
+            zlevel: 1,
+            radius: ['0%', '65%'], 
+            center: pieCenter,
+            silent: true,
+            clockwise: false,
+            label: {
+                show: false,
+            },
+            data: [{
+                name: null,
+                value: 0,
+                itemStyle: {
+                    color: 'rgba(255,255,255, 0.1)',
+                },
+            }],
+        },
+        // 数据源
+        {
+            type: 'pie',
+            roseType: 'area', 
+            clockwise: false,
+            center: pieCenter,
+            zlevel: 2,
+            radius: ['15%', '60%'], 
+            itemStyle: {
+                borderRadius: 4,
+            },
+            data: pieData,
+            label: {
+                normal: {
+                    formatter: params => {
+                        const percentage = params.percent.toFixed(1);
+                        return (
+                            '{icon|●}{name|' + params.name + '}\n{value|' +
+                            params.value + ' (' + percentage + '%)}' 
+                        );
+                    },
+                    rich: {
+                        icon: {
+                            fontSize: 16,
+                            color: 'inherit'
+                        },
+                        name: {
+                            fontSize: 18,
+                            padding: [0, 0, 0, 10],
+                            color: '#fff'
+                        },
+                        value: {
+                            fontSize: 14,
+                            padding: [10, 0, 0, 20],
+                            color: '#fff'
+                        }
+                    }
+                }
+            },
+            labelLine: { 
+                length: 10,
+                length2: 10,
+                lineStyle: {
+                    color: '#fff'
+                }
+            }
+        },
+    ],
+}
+```
+
+### vue2
+
+```js
+<template>
+  <div :class="className" :style="{ height, width }" ref="chartRef"></div>
+</template>
+
+<script>
+import * as echarts from 'echarts';
+// 注意: 您需要在实际项目中导入 generateRandomColor
+import { generateRandomColor } from '@/utils/ruoyi.js'
+
+export default {
+  name: 'PieRoseCharts', // 组件名称设置为 PieRoseCharts
+
+  // 定义 Props
+  props: {
+    className: {
+      type: String,
+      default: 'chart'
+    },
+    width: {
+      type: String,
+      default: '100%'
+    },
+    height: {
+      type: String,
+      default: '300px' // 为饼图提供一个默认高度
+    },
+    // ECharts 颜色列表
+    defaultColor: {
+      type: Array,
+      default: () => [
+        '#5B8FF9', '#5AD8A6', '#5D7092', '#F6BD16', '#E86A92',
+        '#7262FD', '#269A29', '#8E36BE', '#41A7E2', '#7747A3',
+        '#FF7F50', '#FFDAB9', '#ADFF2F', '#00CED1', '#9370DB',
+        '#3CB371', '#FF69B4', '#FFB6C1', '#DA70D6', '#98FB98',
+        '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
+        '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9'
+      ]
+    },
+    // 核心数据
+    chartData: {
+      type: Array,
+      default: () => [
+        { name: "加工成本", value: 920 },
+        { name: "实验成本", value: 458 },
+        { name: "能源成本", value: 653 },
+        { name: "研发成本", value: 372 }
+      ]
+    },
+    //标题
+    chartTitle: {
+      type: String,
+      default: 'pieRose'
+    }
+  },
+
+  data() {
+    return {
+      chart: null, // ECharts 实例
+      pieCenter: ['35%', '50%']
+    };
+  },
+
+  watch: {
+    // 深度侦听 chartData 的变化
+    chartData: {
+      deep: true,
+      handler(val) {
+        this.setOptions(val);
+      }
+    },
+    // 侦听容器宽高的变化
+    width() {
+      this.$nextTick(() => this.resizeChart());
+    },
+    height() {
+      this.$nextTick(() => this.resizeChart());
+    }
+  },
+
+  mounted() {
+    this.$nextTick(() => {
+      this.initChart();
+      window.addEventListener('resize', this.handleResize);
+    });
+  },
+
+  beforeDestroy() {
+    window.removeEventListener('resize', this.handleResize);
+    if (this.chart) {
+      this.chart.dispose();
+      this.chart = null;
+    }
+  },
+
+  methods: {
+    /**
+     * 初始化图表实例
+     */
+    initChart() {
+      if (!this.$refs.chartRef) return;
+
+      if (this.chart) {
+        this.chart.dispose();
+        this.chart = null;
+      }
+
+
+      this.chart = echarts.init(this.$refs.chartRef);
+      this.setOptions(this.chartData);
+    },
+
+    /**
+     * 设置 ECharts 配置项
+     * @param {Array} data - 从 this.chartData 传入的数据
+     */
+    setOptions(data) {
+      if (!this.chart) return;
+
+      const option = {
+        title: {
+          text: this.chartTitle,
+          textStyle: {
+            color: '#ccc'
+          },
+          left:'center'
+        },
+        color: this.defaultColor,
+        tooltip: {
+          show: true,
+          trigger: 'item',
+          backgroundColor: 'transparent', // 完全透明
+          borderWidth: 0,
+          textStyle: {
+            color: '#FFF'
+          },
+          formatter: "{b} <br/> 值: {c} ({d}%)",
+        },
+
+        legend: {
+          show: true,
+          orient: 'vertical',
+          textStyle: {
+            color: '#FFF',
+          },
+          right: '5%',
+          top: 'center',
+          itemWidth: 10,
+          itemHeight: 10,
+          itemGap: 10,
+          formatter(name) {
+            return name; // 只显示名称
+          },
+        },
+
+        series: [
+          // 背景装饰0 实心白圆 zlevel: 4
+          {
+            type: 'pie',
+            zlevel: 4,
+            radius: ['0%', '7%'],
+            center: this.pieCenter,
+            silent: true,
+            label: { show: false },
+            data: [{ value: 0, itemStyle: { color: '#FFF' } }],
+          },
+          // 背景装饰1 半透明圆 zlevel: 3
+          {
+            type: 'pie',
+            radius: ['0%', '15%'],
+            center: this.pieCenter,
+            zlevel: 3,
+            silent: true,
+            label: { show: false },
+            data: [{ value: 0, itemStyle: { color: 'rgba(255,255,255, 0.1)' } }],
+          },
+          // 背景装饰3 半透明底盘 zlevel: 1
+          {
+            type: 'pie',
+            zlevel: 1,
+            radius: ['0%', '65%'], // 匹配缩小后的外圈大小
+            center: this.pieCenter,
+            silent: true,
+            label: { show: false },
+            data: [{ value: 0, itemStyle: { color: 'rgba(255,255,255, 0.1)' } }],
+          },
+
+          // 数据源 (主玫瑰图, 已缩小, 百分比修正)
+          {
+            type: 'pie',
+            roseType: 'area', // 玫瑰图类型
+            clockwise: false,
+            center: this.pieCenter,
+            zlevel: 2,
+            radius: ['15%', '60%'], // 缩小尺寸
+            itemStyle: {
+              borderRadius: 4,
+            },
+            data: data, // 使用传入的数据
+            label: {
+              normal: {
+                formatter: params => {
+                  const percentage = params.percent.toFixed(1);
+                  return (
+                    '{icon|●}{name|' + params.name + '}\n{value|' +
+                    params.value + ' (' + percentage + '%)}' // 显示 值 (百分比%)
+                  );
+                },
+                rich: {
+                  icon: { fontSize: 16, color: 'inherit' },
+                  name: { fontSize: 18, padding: [0, 0, 0, 10], color: '#fff' },
+                  value: { fontSize: 14, padding: [10, 0, 0, 20], color: '#fff' }
+                }
+              }
+            },
+            labelLine: {
+              length: 10,
+              length2: 10,
+              lineStyle: { color: '#fff' }
+            }
+          },
+        ],
+      };
+
+      this.chart.setOption(option, true);
+    },
+
+    /**
+     * 处理窗口大小变化，重绘图表
+     */
+    handleResize() {
+      this.chart?.resize();
+    },
+
+    /**
+     * 外部调用方法：重设图表大小
+     */
+    resizeChart() {
+      this.chart?.resize();
+    }
+  }
+};
+</script>
+
+<style scoped>
+/* 确保图表容器有正确的布局 */
+.chart {
+  overflow: hidden;
+}
+</style>
 ```
 
 
@@ -6328,10 +8249,6 @@ watch(() => props.defaultIndexName, () => {
 }
 </style>
 ```
-
-
-
-
 
 # 工具
 
