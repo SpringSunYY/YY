@@ -2762,11 +2762,11 @@ export default {
       // 默认数据，用于在父组件未传入数据时显示
       default: () => ({
         names: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
-        values: [2220, 1682, 2791, 3000, 4090, 3230, 2910]
+        values: [75, 68, 82, 85, 90, 78, 72]
       })
     },
-    chartTitle: { type: String, default: 'simple-line-chart' },
-    chartName: { type: String, default: 'simple-line-chart' }
+    chartTitle: { type: String, default: '简单折线图' },
+    chartName: { type: String, default: '数据值' }
   },
 
   data() {
@@ -2779,6 +2779,7 @@ export default {
     // 深度侦听 chartData 对象的变化
     chartData: {
       deep: true,
+      immediate: true,
       handler(val) {
         // 当数据变化时，重新设置 ECharts 配置项
         this.setOptions(val)
@@ -2833,6 +2834,7 @@ export default {
         }
 
         // 初始化 ECharts 实例
+        // 可以在这里传入主题，例如：echarts.init(this.$refs.chartRef, 'macarons')
         this.chart = echarts.init(this.$refs.chartRef)
 
         // 设置初始配置项
@@ -2841,7 +2843,7 @@ export default {
     },
 
     /**
-     * 设置 ECharts 配置项 (使用您提供的样式)
+     * 设置 ECharts 配置项
      * @param {Object} data - 从 this.chartData 传入的数据
      */
     setOptions(data) {
@@ -2860,7 +2862,7 @@ export default {
           textStyle: {
             color: '#ccc'
           },
-          left: '2%'
+          left: 'center'
         },
         tooltip: {
           trigger: 'axis',
@@ -2871,13 +2873,21 @@ export default {
           borderWidth: 0,
           textStyle: {
             color: '#FFF'
+          },
+          formatter: function(params) {
+            let res = params[0].name + '<br/>'
+            params.forEach(function(item) {
+              // 在数值后面加上 '%'
+              res += item.marker + item.seriesName + ': ' + item.value + '%' + '<br/>'
+            })
+            return res
           }
         },
         grid: {
           left: '5%',
           right: '5%',
-          bottom: '5%',
-          top: 90,
+          bottom: '12%',
+          top: '18%',
           containLabel: true
         },
         xAxis: {
@@ -2903,6 +2913,26 @@ export default {
           axisLine: { lineStyle: { color: '#ccc' } },
           axisLabel: { color: '#ccc' }
         },
+        dataZoom: [
+          {
+            type: 'slider', // 滑块型 dataZoom (拖动条)
+            show: true,
+            xAxisIndex: [0],
+            start: 0,        // 初始显示范围起始
+            end: 100,      // 初始显示范围结束
+            height: 20,
+            bottom: '2%',    // 放置在底部
+            textStyle: {
+              color: '#ccc'
+            }
+          },
+          {
+            type: 'inside', // 内置型 dataZoom (鼠标滚轮/触摸板操作)
+            xAxisIndex: [0],
+            start: 0,
+            end: 100
+          }
+        ],
         series: [
           {
             name: this.chartName, // 系列名称
@@ -3665,7 +3695,7 @@ export default {
       type: String,
       default: '100%'
     },
-    chartName: {
+    chartTitle: {
       type: String,
       default: '饼图'
     },
@@ -3763,7 +3793,7 @@ export default {
 
       const option = {
         title: {
-          text: this.chartName, // 使用 this.chartName
+          text: this.chartTitle, 
           textStyle: {
             fontSize: 16,
             color: '#2e95f3'
@@ -3786,7 +3816,7 @@ export default {
         },
         series: [
           {
-            name: this.chartName, // 使用 this.chartName
+            name: this.chartTitle, // 使用 this.chartName
             type: 'pie',
             roseType: 'radius',
             top: '10%',
