@@ -4178,6 +4178,16 @@ export default {
       type: String,
       default: '总数'
     },
+    //比例
+    rateValue: {
+      type: Number,
+      default: 1000
+    },
+    //比例符号
+    rateSymbol: {
+      type: String,
+      default: '‰'
+    },
     defaultColor: {
       type: Array,
       default: () => [
@@ -4245,6 +4255,8 @@ export default {
       }
 
       const totalValue = this.total
+      const rateValue = this.rateValue
+      const rateSymbol = this.rateSymbol
       const totalNameValue = this.totalName
       const chartTitleValue = this.chartTitle
       const defaultColorValue = this.defaultColor
@@ -4288,8 +4300,8 @@ export default {
           trigger: 'item',
           formatter: function(params) {
             // 使用外部捕获的 totalValue
-            const permillage = (params.value / totalValue * 1000).toFixed(2)
-            return `${params.name}: ${params.value} (${permillage}‰)`
+            const permillage = (params.value / totalValue * rateValue).toFixed(2)
+            return `${params.name}: ${params.value} (${permillage}${rateSymbol})`
           }
         },
 
@@ -4311,8 +4323,8 @@ export default {
               // 使用自定义函数格式化，计算千分比
               formatter: function(params) {
                 // 使用外部捕获的 totalValue
-                const permillage = (params.value / totalValue * 1000).toFixed(2)
-                return `${params.name}\n${params.value} (${permillage}‰)`
+                const permillage = (params.value / totalValue * rateValue).toFixed(2)
+                return `${params.name}\n${params.value} (${permillage}${rateSymbol})`
               }
             },
             labelLine: {
