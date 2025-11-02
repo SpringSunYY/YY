@@ -1,4 +1,334 @@
+
+
 # 柱形图
+
+[TOC]
+
+
+
+## 柱形折线比例图：BarLineRateCharts
+
+![image-20251102165949004](assets/image-20251102165949004.png)
+
+### vue2
+
+```js
+<template>
+  <div :class="className" :style="{ height, width }" ref="chartRef"></div>
+</template>
+
+<script>
+// 确保您已安装并引入 ECharts 库
+import * as echarts from 'echarts'
+
+export default {
+  name: 'BarLineRateCharts', // 组件名称
+
+  // 定义 Props
+  props: {
+    className: {
+      type: String,
+      default: 'chart'
+    },
+    width: {
+      type: String,
+      default: '100%'
+    },
+    height: {
+      type: String,
+      default: '100%' // 默认高度
+    },
+    // 内层系列名称 (柱状图)
+    innerName: {
+      type: String,
+      default: '实际值'
+    },
+    // 外层系列名称 (折线图)
+    outerName: {
+      type: String,
+      default: '总量'
+    },
+    // 核心图表数据
+    chartData: {
+      type: Object,
+      default: () => ({
+        names: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+        outerValues: [2220, 1682, 2791, 3000, 4090, 3230, 2910], // 折线图数据
+        innerValues: [1220, 682, 791, 1000, 2090, 2230, 1910]  // 柱状图数据
+      })
+    },
+    // 图表标题
+    chartTitle: {
+      type: String,
+      default: 'BarLineRate'
+    }
+  },
+
+  data() {
+    return {
+      chart: null // ECharts 实例
+    }
+  },
+
+  watch: {
+    // 深度侦听 chartData 的变化，如果数据更新，则重绘图表
+    chartData: {
+      deep: true,
+      handler(val) {
+        this.setOptions(val)
+      }
+    },
+  },
+
+  mounted() {
+    this.$nextTick(() => {
+      this.initChart()
+      // 监听窗口大小变化以适应图表
+      window.addEventListener('resize', this.handleResize)
+    })
+  },
+
+  beforeDestroy() {
+    window.removeEventListener('resize', this.handleResize)
+    if (this.chart) {
+      this.chart.dispose()
+      this.chart = null
+    }
+  },
+
+  methods: {
+    /**
+     * 初始化图表实例
+     */
+    initChart() {
+      if (!this.$refs.chartRef) return
+
+      if (this.chart) {
+        this.chart.dispose()
+        this.chart = null
+      }
+
+      this.chart = echarts.init(this.$refs.chartRef)
+      this.setOptions(this.chartData)
+    },
+
+    /**
+     * 设置 ECharts 配置项并渲染图表
+     * @param {Object} data - 从 this.chartData 传入的数据
+     */
+    setOptions(data) {
+      if (!this.chart || !data || !data.outerValues || data.outerValues.length === 0) return
+
+      const innerName = this.innerName
+      const outerName = this.outerName
+      const barBorderRadius = [30, 30, 0, 0]
+
+      const option = {
+        title: {
+          text: this.chartTitle,
+          top: 10,
+          left: 0,
+          textStyle: {
+            color: '#C5E5F9',
+            fontSize: 18
+          }
+        },
+        grid: {
+          top: '16%',
+          left: '0%',
+          right: '7%',
+          bottom: '12%',
+          containLabel: true
+        },
+        legend: {
+          itemGap: 30,
+          top: '4%',
+          right: '7%',
+          data: [innerName, outerName],
+          textStyle: {
+            color: '#fff',
+            borderColor: '#fff'
+          }
+        },
+        dataZoom: [
+          {
+            type: 'slider',
+            show: true,
+            xAxisIndex: [0],
+            start: 0,
+            end: 100,
+            bottom: '4%',
+            height: 20,
+            textStyle: {
+              color: '#fff'
+            }
+          },
+          {
+            type: 'inside',
+            xAxisIndex: [0],
+            start: 0,
+            end: 100
+          }
+        ],
+        tooltip: {
+          trigger: 'axis',
+          padding: [5, 10, 5, 10],
+          backgroundColor: 'transparent',
+          borderColor: 'transparent',
+          textStyle: {
+            color: '#fff'
+          },
+          // 纯文本 formatter，使用 \n 换行
+          formatter: (param) => {
+            // 确保在 Vue 组件环境中可以访问 formatToFixed 和 getEquiUnit
+            const formatToFixed_fn = typeof formatToFixed === 'function' ? formatToFixed : (val) => val
+            const getEquiUnit_fn = typeof getEquiUnit === 'function' ? getEquiUnit : (name) => ''
+
+            let tooltipContent = ''
+
+            // 1. 标题（X轴类别名），后面接换行
+            tooltipContent += `${param[0]?.axisValue}<br/>`
+
+            // 2. 过滤并添加显示的系列数据
+            const visibleItems = param.filter(item => item.seriesName === innerName || item.seriesName === outerName)
+            visibleItems.forEach(item => {
+              tooltipContent += `${item.seriesName}: ${formatToFixed_fn(item.data)}${item.data !== '--' ? getEquiUnit_fn(item.seriesName) : ''}<br/>`
+            })
+
+            // 3. 计算占比
+            const innerItem = param.find(item => item.seriesName === innerName)
+            const outerItem = param.find(item => item.seriesName === outerName)
+
+            if (innerItem && outerItem && outerItem.data !== 0) {
+              const ratio = (innerItem.data / outerItem.data * 100)
+              tooltipContent += `${innerName} / ${outerName} 占比: ${ratio.toFixed(2)}%`
+            }
+
+            return tooltipContent
+          }
+        },
+        xAxis: [{
+          nameGap: 5,
+          type: 'category',
+          axisLine: {
+            show: true,
+            lineStyle: {
+              color: '#999'
+            }
+          },
+          axisLabel: {
+            color: '#9eaaba'
+          },
+          axisTick: {
+            show: false
+          },
+          data: data.names // 使用 Prop 数据
+        }],
+        yAxis: [
+          {
+            nameTextStyle: {
+              color: '#9eaaba'
+            },
+            offset: 0,
+            type: 'value',
+            axisLabel: {
+              show: true,
+              color: '#9eaaba'
+            },
+            axisLine: {
+              show: true
+            },
+            splitLine: {
+              show: true,
+              lineStyle: {
+                width: 1,
+                color: 'rgba(49,105,129,0.4)',
+                type: 'dashed'
+              }
+            }
+          }
+        ],
+        series: [
+          {
+            name: innerName, // 柱状图
+            type: 'bar',
+            barWidth: 15,
+            label: {
+              show: false,
+              position: 'top',
+              color: '#fff'
+            },
+            itemStyle: {
+              color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                { offset: 0, color: '#32ACF0' },
+                { offset: 1, color: 'rgba(124,248,255,1)' }
+              ], false),
+              lineStyle: {
+                width: 1,
+                type: 'solid'
+              },
+              barBorderRadius: barBorderRadius
+            },
+            data: data.innerValues
+          },
+          {
+            name: outerName, // 折线图
+            type: 'line',
+            smooth: true,
+            showAllSymbol: true,
+            symbol: 'circle',
+            symbolSize: 6,
+            lineStyle: {
+              color: 'rgba(44, 244, 255, 1)',
+              borderColor: '#f0f'
+            },
+            label: {
+              show: false,
+              position: 'top',
+              color: '#fff'
+            },
+            itemStyle: {
+              color: '#2CF2FD',
+              lineStyle: {
+                width: 1,
+                type: 'solid'
+              }
+            },
+            areaStyle: {
+              color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                { offset: 0, color: '#2CF4FF' },
+                { offset: 1, color: 'rgba(124,248,255,0.1)' }
+              ], false),
+              shadowColor: 'rgba(124,248,255, 0)',
+              shadowBlur: 20
+            },
+            data: data.outerValues
+          }
+        ]
+      }
+
+      this.chart.setOption(option, true)
+    },
+
+    /**
+     * 处理窗口大小变化，重绘图表
+     */
+    handleResize() {
+      this.chart && this.chart.resize()
+    }
+  }
+}
+</script>
+
+<style scoped>
+.chart {
+  /* 确保容器有高度才能显示图表 */
+  overflow: hidden;
+}
+</style>
+```
+
+
 
 ## 柱形比例图：BarRateCharts
 
@@ -4130,18 +4460,17 @@ option = {
 
 ```js
 <template>
-  <div :class="className" :style="{ height, width }" ref="chartRef"/>
+  <div :class="className" :style="{ height, width }" ref="chartRef"></div>
 </template>
 
 <script>
 import * as echarts from 'echarts'
-import 'echarts/theme/macarons'
-
-import { generateRandomColor } from '@/utils/ruoyi.js'
+import 'echarts/theme/macarons' // 引入 'macarons' 主题
 
 export default {
-  name: 'PieTotalRateCharts',
+  name: 'PieRoseCharts', // 组件名称设置为 PieRoseCharts
 
+  // 定义 Props
   props: {
     className: {
       type: String,
@@ -4155,39 +4484,7 @@ export default {
       type: String,
       default: '100%'
     },
-    chartTitle: {
-      type: String,
-      default: '问题分类'
-    },
-    // 传入的图表数据
-    chartData: {
-      type: Array,
-      default: () => [
-        { name: '一级问题', value: 100 },
-        { name: '二级问题', value: 20 },
-        { name: '三级问题', value: 30 }
-      ]
-    },
-    // 总数
-    total: {
-      type: Number,
-      default: 2000
-    },
-    // 中心总数文本的名称
-    totalName: {
-      type: String,
-      default: '总数'
-    },
-    //比例
-    rateValue: {
-      type: Number,
-      default: 1000
-    },
-    //比例符号
-    rateSymbol: {
-      type: String,
-      default: '‰'
-    },
+    // ECharts 颜色列表
     defaultColor: {
       type: Array,
       default: () => [
@@ -4198,12 +4495,28 @@ export default {
         '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
         '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9'
       ]
+    },
+    // 核心数据
+    chartData: {
+      type: Array,
+      default: () => [
+        { name: '加工成本', value: 920 },
+        { name: '实验成本', value: 458 },
+        { name: '能源成本', value: 653 },
+        { name: '研发成本', value: 372 }
+      ]
+    },
+    //标题
+    chartTitle: {
+      type: String,
+      default: 'pieRose'
     }
   },
 
   data() {
     return {
-      chart: null // ECharts 实例
+      chart: null, // ECharts 实例
+      pieCenter: ['50%', '50%']
     }
   },
 
@@ -4211,16 +4524,9 @@ export default {
     // 深度侦听 chartData 的变化
     chartData: {
       deep: true,
-      handler(newData) {
-        this.initChart(newData)
+      handler(val) {
+        this.setOptions(val)
       }
-    },
-    // 侦听 total 的变化
-    total() {
-      this.initChart(this.chartData)
-    },
-    totalName() {
-      this.initChart(this.chartData)
     }
   },
 
@@ -4232,136 +4538,151 @@ export default {
   },
 
   beforeDestroy() {
+    // 销毁 ECharts 实例
     if (this.chart) {
       this.chart.dispose()
       this.chart = null
     }
+    // 移除窗口监听事件
     window.removeEventListener('resize', this.handleResize)
   },
 
   methods: {
     /**
-     * 初始化图表
+     * 初始化图表实例
      */
-    initChart(data) {
-      if (!data || !data.length) {
-        return
-      }
+    initChart() {
+      if (!this.$refs.chartRef) return
 
-      // 销毁已有实例
       if (this.chart) {
         this.chart.dispose()
         this.chart = null
       }
 
-      const totalValue = this.total
-      const rateValue = this.rateValue
-      const rateSymbol = this.rateSymbol
-      const totalNameValue = this.totalName
-      const chartTitleValue = this.chartTitle
-      const defaultColorValue = this.defaultColor
-
-      const coloredData = data.map(item => ({
-        ...item,
-        itemStyle: {
-          color: generateRandomColor(defaultColorValue)
-        }
-      }))
-
       this.chart = echarts.init(this.$refs.chartRef, 'macarons')
+      this.setOptions(this.chartData)
+    },
+
+    /**
+     * 设置 ECharts 配置项
+     * @param {Array} data - 从 this.chartData 传入的数据
+     */
+    setOptions(data) {
+      if (!this.chart) return
 
       const option = {
         title: {
           text: this.chartTitle,
-          top: 20,
-          left: 'center',
           textStyle: {
-            color: '#C5E5F9',
-            fontSize: 18
-          }
-        },
-        color: defaultColorValue,
-
-        // legend (图例)
-        legend: {
-          orient: 'horizontal',
-          bottom: '5%',
-          data: data.map(item => item.name),
-          textStyle: {
-            color: '#fff',
-            fontSize: 14
+            color: '#ccc'
           },
-          icon: 'circle',
-          itemGap: 20
+          left: 'center'
+        },
+        color: this.defaultColor,
+        tooltip: {
+          show: true,
+          trigger: 'item',
+          backgroundColor: 'transparent', // 完全透明
+          borderWidth: 0,
+          textStyle: {
+            color: '#FFF'
+          },
+          formatter: '{b} <br/> 值: {c} ({d}%)'
         },
 
-        // tooltip: 使用 totalValue 计算千分比 (‰)
-        tooltip: {
-          trigger: 'item',
-          formatter: function(params) {
-            // 使用外部捕获的 totalValue
-            const permillage = (params.value / totalValue * rateValue).toFixed(2)
-            return `${params.name}: ${params.value} (${permillage}${rateSymbol})`
+        legend: {
+          show: true,
+
+          orient: 'horizontal',
+
+          type: 'scroll',
+
+          left: '5%',
+          right: '5%',
+          bottom: '5%',
+
+          height: 60,
+
+          textStyle: {
+            color: '#FFF'
+          },
+          itemWidth: 10,
+          itemHeight: 10,
+          itemGap: 10, // 如果名称过长，可以尝试减小到 5
+          formatter(name) {
+            return name // 只显示名称
           }
         },
 
         series: [
+          // 背景装饰0 实心白圆 zlevel: 4
           {
-            name: chartTitleValue,
             type: 'pie',
-            center: ['50%', '45%'],
-            radius: ['45%', '55%'],
-            avoidLabelOverlap: false,
+            zlevel: 4,
+            radius: ['0%', '7%'],
+            center: this.pieCenter,
+            silent: true,
+            label: { show: false },
+            data: [{ value: 0, itemStyle: { color: '#FFF' } }]
+          },
+          // 背景装饰1 半透明圆 zlevel: 3
+          {
+            type: 'pie',
+            radius: ['0%', '15%'],
+            center: this.pieCenter,
+            zlevel: 3,
+            silent: true,
+            label: { show: false },
+            data: [{ value: 0, itemStyle: { color: 'rgba(255,255,255, 0.1)' } }]
+          },
+          // 背景装饰3 半透明底盘 zlevel: 1
+          {
+            type: 'pie',
+            zlevel: 1,
+            radius: ['0%', '65%'], // 匹配缩小后的外圈大小
+            center: this.pieCenter,
+            silent: true,
+            label: { show: false },
+            data: [{ value: 0, itemStyle: { color: 'rgba(255,255,255, 0.1)' } }]
+          },
+
+          // 数据源 
+          {
+            type: 'pie',
+            roseType: 'area', // 玫瑰图类型
+            clockwise: false,
+            center: this.pieCenter,
+            zlevel: 2,
+            radius: ['15%', '60%'], // 缩小尺寸
             itemStyle: {
-              borderRadius: 10
+              borderRadius: 4
             },
+            data: data, // 使用传入的数据
             label: {
-              show: true,
-              position: 'outside',
-              color: '#fff',
-              fontSize: 14,
-              // 使用自定义函数格式化，计算千分比
-              formatter: function(params) {
-                // 使用外部捕获的 totalValue
-                const permillage = (params.value / totalValue * rateValue).toFixed(2)
-                return `${params.name}\n${params.value} (${permillage}${rateSymbol})`
+              normal: {
+                formatter: params => {
+                  const percentage = params.percent.toFixed(1)
+                  return (
+                    '{icon|●}{name|' + params.name + '}\n{value|' +
+                  ' (' + percentage + '%)}' // 显示 值 (百分比%)
+                  )
+                },
+                rich: {
+                  icon: { fontSize: 16, color: 'inherit' },
+                  name: { fontSize: 18, padding: [0, 0, 0, 10], color: '#fff' },
+                  value: { fontSize: 14, padding: [10, 0, 0, 20], color: '#fff' }
+                }
               }
             },
             labelLine: {
-              show: true,
               length: 10,
               length2: 10,
-              lineStyle: {
-                color: '#fff'
-              }
-            },
-            data: coloredData
-          },
-          // 饼图中心的文本，显示自定义总数
-          {
-            name: '中心总数',
-            type: 'pie',
-            center: ['50%', '45%'],
-            radius: ['0%', '39%'],
-            hoverAnimation: false,
-            silent: true,
-            itemStyle: {
-              color: 'transparent'
-            },
-            label: {
-              show: true,
-              position: 'center',
-              color: '#fff',
-              fontSize: 18,
-              // 使用外部捕获的 totalNameValue 和 totalValue
-              formatter() {
-                return `${totalNameValue}\n\n${totalValue}`
-              }
-            },
-            data: [{ value: 1, name: 'Total Placeholder' }]
+              lineStyle: { color: '#fff' }
+            }
           }
         ]
       }
+
       this.chart.setOption(option)
     },
 
@@ -4373,11 +4694,13 @@ export default {
         this.chart.resize()
       }
     }
+
   }
 }
 </script>
 
 <style scoped>
+/* 确保图表容器有正确的布局 */
 .chart {
   overflow: hidden;
 }
@@ -4655,7 +4978,7 @@ export default {
      * 初始化图表
      */
     initChart(data) {
-      if (!data || !data.length) {
+      if (!data || !data.length || data.length === 0) {
         return
       }
 
@@ -4682,7 +5005,7 @@ export default {
 
       const option = {
         title: {
-          text: this.chartTitle, 
+          text: this.chartTitle,
           textStyle: {
             fontSize: 16,
             color: '#2e95f3'
@@ -4699,8 +5022,13 @@ export default {
           }
         },
         legend: {
-          left: 'center',
-          bottom: '10%',
+          type: 'scroll', // 启用滚动
+          orient: 'horizontal', // 水平排列
+          height: 100 ,
+          left: '5%',   // 从左侧 5% 的位置开始
+          right: '5%',  // 在右侧 5% 的位置结束，这样图例的可用宽度就是 90%
+          bottom: '5%',
+          itemGap: 5,
           textStyle: { fontSize: 14, color: '#ffffff' } // 原 legend 颜色
         },
         series: [
@@ -5562,7 +5890,7 @@ onBeforeUnmount(() => {
 
 ![image-20250927193136432](assets/image-20250927193136432.png)
 
-## Vue3
+### Vue3
 
 ```js
 <template>
