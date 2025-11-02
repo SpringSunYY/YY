@@ -1,10 +1,8 @@
 
 
-# 柱形图
-
 [TOC]
 
-
+# 柱形图
 
 ## 柱形折线比例图：BarLineRateCharts
 
