@@ -3466,7 +3466,7 @@ watch(
 
 # 折线图
 
-## 简单折线图：SimpleLineChart
+## 简单折线图：LineSimpleChart
 
 ![image-20251027152712170](assets/image-20251027152712170.png)
 
@@ -3588,7 +3588,7 @@ import * as echarts from 'echarts'
 // import 'echarts/theme/macarons';
 
 export default {
-  name: 'SimpleLineChart',
+  name: 'LineSimpleChart',
   props: {
     className: { type: String, default: 'chart' },
     width: { type: String, default: '100%' },
@@ -4335,6 +4335,520 @@ watch(
 
 
 # 饼图
+
+## 饼图总数图：PieTotalCharts
+
+![YY_2025-11-08_19-51-09](assets/YY_2025-11-08_19-51-09.png)
+
+### js
+
+```js
+// 【副标题变量提取】
+const subTitleText = "人才总数"; // 1. 将副标题提取为一个变量，方便自定义
+
+// 简化数据结构，只保留 name 和 value
+const rawData = [
+  { name: "出行", value: 30 },
+  { name: "购物", value: 40 },
+  { name: "旅游", value: 50 },
+  { name: "娱乐", value: 20 },
+  { name: "餐饮", value: 16 },
+  { name: "住宿", value: 24 },
+];
+
+const sum = rawData.reduce((per, cur) => per + cur.value, 0); // 计算总数
+const gap = (1 * sum) / 100; // 间隙值，总数的 1%
+
+const pieData1 = [];
+const gapData = {
+  name: "",
+  value: gap,
+  itemStyle: {
+    color: "transparent",
+  },
+};
+
+// 构造带间隙的饼图数据
+for (let i = 0; i < rawData.length; i++) {
+  pieData1.push(rawData[i]); 
+  pieData1.push(gapData);
+}
+
+// 提取所有名称用于 legend
+const legendData = rawData.map(item => item.name);
+
+let option = {
+  backgroundColor: "#102146",
+  
+  tooltip: {
+    show: true,
+    trigger: "item",
+    backgroundColor: "rgba(30, 48, 80, 0.8)", // 半透明深蓝色背景
+    borderColor: '#4A65A7', 
+    borderWidth: 1,
+    padding: [10, 15],
+    formatter: function (params) {
+      if (params.name === "") {
+        return "";
+      }
+      // 显示名称、数值、比例
+      return (
+        `<span style="color: ${params.color}; font-size: 14px;">●</span>` + 
+        `<span style="color: #fff; font-size: 14px;"> ${params.name}：</span>` + 
+        `<span style="color: #fff; font-size: 14px; font-weight: bold;">${params.value}</span>` + 
+        `<span style="color: #fff; font-size: 14px;"> (${params.percent.toFixed(1)}%)</span>`
+      );
+    },
+    textStyle: {
+      color: "#fff",
+    },
+  },
+
+  title: {
+    show: true,
+    text: sum.toString(), // 动态计算总数
+    subtext: subTitleText, // 【使用提取的变量】
+    x: "39.5%",
+    y: "43%",
+    itemGap: 6,
+    textStyle: {
+      color: "#fff",
+      fontSize: 50,
+      fontWeight: "400",
+      lineHeight: 60,
+    },
+    subtextStyle: {
+      color: "#fff",
+      fontSize: 26,
+      fontWeight: "400",
+      lineHeight: 36,
+    },
+    textAlign: "center",
+  },
+
+  legend: {
+    orient: "vertical",
+    icon: "diamond",
+    textStyle: {
+      color: "#f2f2f2",
+      fontSize: "12px",
+    },
+    top: "10%",
+    right: "5%",
+    itemGap: 14,
+    itemHeight: 14,
+    itemWidth: 14,
+    data: legendData,
+  },
+  series: [
+    {
+      name: "业务分类", 
+      type: "pie",
+      roundCap: true,
+      radius: ["40%", "56%"],
+      center: ["40%", "50%"],
+      data: pieData1,
+      labelLine: {
+        length: 8,
+        length2: 16,
+        lineStyle: {
+          width: 1,
+        },
+      },
+      label: {
+        show: true,
+        fontFamily: "ysbth",
+        position: "outside",
+        padding: [0, -4, 0, -4],
+        // 显示名字和百分比
+        formatter(params) {
+          if (params.name === "") {
+            return "";
+          }
+          return `${params.name}\n${params.percent.toFixed(0)}%`;
+        },
+        color: "#fff",
+        fontSize: "14px",
+        lineHeight: 18, 
+      },
+    },
+    // 保持不变的辅助圆环系列
+    {
+      type: "pie",
+      radius: ["32%", "34%"],
+      center: ["40%", "50%"],
+      animation: false,
+      hoverAnimation: false,
+      data: [
+        {
+          value: 100,
+        },
+      ],
+      label: {
+        show: false,
+      },
+      itemStyle: {
+        normal: {
+          color: "#3BC5EF",
+        },
+      },
+    },
+    {
+      name: "",
+      type: "pie",
+      startAngle: 90,
+      radius: "32%",
+      animation: false,
+      hoverAnimation: false,
+      center: ["40%", "50%"],
+      itemStyle: {
+        normal: {
+          labelLine: {
+            show: false,
+          },
+          color: new echarts.graphic.RadialGradient(0.5, 0.5, 1, [
+            {
+              offset: 1,
+              color: "rgba(50,171,241, 0)",
+            },
+            {
+              offset: 0.5,
+              color: "rgba(50,171,241, .4)",
+            },
+            {
+              offset: 0,
+              color: "rgba(55,70,130, 0)",
+            },
+          ]),
+          shadowBlur: 60,
+        },
+      },
+      data: [
+        {
+          value: 100,
+        },
+      ],
+    },
+  ],
+};
+```
+
+### vue2
+
+```js
+<template>
+  <div :class="className" :style="{ height, width }" ref="chartRef"></div>
+</template>
+
+<script>
+import * as echarts from 'echarts'
+
+export default {
+  name: 'PieTotalCharts', // 组件名称设置为 PieTotalCharts
+
+  // 定义 Props
+  props: {
+    className: {
+      type: String,
+      default: 'chart'
+    },
+    width: {
+      type: String,
+      default: '100%'
+    },
+    height: {
+      type: String,
+      default: '100%'
+    },
+    // 核心数据 (对应您之前的 rawData)
+    chartData: {
+      type: Array,
+      default: () => [
+        { name: '出行', value: 30 },
+        { name: '购物', value: 40 },
+        { name: '旅游', value: 50 },
+        { name: '娱乐', value: 20 },
+        { name: '餐饮', value: 16 },
+        { name: '住宿', value: 24 }
+      ]
+    },
+    // 标题
+    chartTitle: {
+      type: String,
+      default: '人才总数'
+    }
+  },
+
+  data() {
+    return {
+      chart: null, // ECharts 实例
+      // 饼图的中心位置，为了与原图配置匹配，固定为 ["40%", "50%"]
+      pieCenter: ['40%', '50%']
+    }
+  },
+
+  watch: {
+    // 深度侦听 chartData 的变化
+    chartData: {
+      deep: true,
+      handler(val) {
+        this.setOptions(val)
+      }
+    },
+    // 侦听其他 props 的变化，确保图表更新
+    subTitle(val) {
+      this.setOptions(this.chartData)
+    },
+    width() {
+      this.$nextTick(() => this.resizeChart())
+    },
+    height() {
+      this.$nextTick(() => this.resizeChart())
+    }
+  },
+
+  mounted() {
+    this.$nextTick(() => {
+      this.initChart()
+      window.addEventListener('resize', this.handleResize)
+    })
+  },
+
+  beforeDestroy() {
+    window.removeEventListener('resize', this.handleResize)
+    if (this.chart) {
+      this.chart.dispose()
+      this.chart = null
+    }
+  },
+
+  methods: {
+    /**
+     * 初始化图表实例
+     */
+    initChart() {
+      if (!this.$refs.chartRef) return
+
+      if (this.chart) {
+        this.chart.dispose()
+        this.chart = null
+      }
+
+      this.chart = echarts.init(this.$refs.chartRef)
+      this.setOptions(this.chartData)
+    },
+
+    /**
+     * 设置 ECharts 配置项
+     * @param {Array} data - 从 this.chartData 传入的数据
+     */
+    setOptions(data) {
+      if (!this.chart || !data || data.length === 0) return
+
+      // 1. 计算总数
+      const sum = data.reduce((per, cur) => per + cur.value, 0)
+      // 2. 计算间隙值 (总数的 1%)
+      const gap = (1 * sum) / 100
+
+      const pieData1 = []
+      const gapData = {
+        name: '',
+        value: gap,
+        itemStyle: {
+          color: 'transparent'
+        }
+      }
+
+      // 构造带间隙的饼图数据
+      for (let i = 0; i < data.length; i++) {
+        pieData1.push(data[i])
+        pieData1.push(gapData)
+      }
+
+      // 提取所有名称用于 legend
+      const legendData = data.map(item => item.name)
+
+      const option = {
+        backgroundColor: '#102146',
+        title: {
+          show: true,
+          text: sum.toString(), // 动态计算总数
+          subtext: this.chartTitle, // 使用 Props
+          x: '39.5%',
+          y: '42%',
+          itemGap: 6,
+          textStyle: {
+            color: '#fff',
+            fontSize: 25,
+            fontWeight: '400',
+          },
+          subtextStyle: {
+            color: '#fff',
+            fontSize: 18,
+            fontWeight: '400',
+          },
+          textAlign: 'center'
+        },
+        tooltip: {
+          show: true,
+          trigger: 'item',
+          backgroundColor: 'rgba(30, 48, 80, 0.8)', // 半透明深蓝色背景
+          borderColor: '#4A65A7',
+          borderWidth: 1,
+          padding: [10, 15],
+          formatter: function(params) {
+            if (params.name === '') {
+              return ''
+            }
+            // 显示名称、数值、比例
+            return (
+                `<span style="color: ${params.color}; font-size: 14px;">●</span>` +
+                `<span style="color: #fff; font-size: 14px;"> ${params.name}：</span>` +
+                `<span style="color: #fff; font-size: 14px; font-weight: bold;">${params.value}</span>` +
+                `<span style="color: #fff; font-size: 14px;"> (${params.percent.toFixed(1)}%)</span>`
+            )
+          },
+          textStyle: {
+            color: '#fff'
+          }
+        },
+
+        legend: {
+          orient: 'vertical',
+          icon: 'diamond',
+          textStyle: {
+            color: '#f2f2f2',
+            fontSize: '12px'
+          },
+          top: '10%',
+          right: '5%',
+          itemGap: 14,
+          itemHeight: 14,
+          itemWidth: 14,
+          data: legendData
+        },
+        series: [
+          {
+            name: '业务分类',
+            type: 'pie',
+            roundCap: true,
+            radius: ['40%', '56%'],
+            center: this.pieCenter, // 使用 data 中的 pieCenter
+            data: pieData1,
+            labelLine: {
+              length: 8,
+              length2: 16,
+              lineStyle: {
+                width: 1
+              }
+            },
+            label: {
+              show: true,
+              fontFamily: 'ysbth',
+              position: 'outside',
+              padding: [0, -4, 0, -4],
+              // 显示名字和百分比
+              formatter(params) {
+                if (params.name === '') {
+                  return ''
+                }
+                return `${params.name}\n${params.percent.toFixed(0)}%`
+              },
+              color: '#fff',
+              fontSize: '14px',
+              lineHeight: 18
+            }
+          },
+          // 辅助圆环：内圈边框
+          {
+            type: 'pie',
+            radius: ['32%', '34%'],
+            center: this.pieCenter,
+            animation: false,
+            hoverAnimation: false,
+            data: [
+              {
+                value: 100
+              }
+            ],
+            label: {
+              show: false
+            },
+            itemStyle: {
+              normal: {
+                color: '#3BC5EF'
+              }
+            }
+          },
+          // 辅助圆环：中心发光效果
+          {
+            name: '',
+            type: 'pie',
+            startAngle: 90,
+            radius: '32%',
+            animation: false,
+            hoverAnimation: false,
+            center: this.pieCenter,
+            itemStyle: {
+              normal: {
+                labelLine: {
+                  show: false
+                },
+                color: new echarts.graphic.RadialGradient(0.5, 0.5, 1, [
+                  {
+                    offset: 1,
+                    color: 'rgba(50,171,241, 0)'
+                  },
+                  {
+                    offset: 0.5,
+                    color: 'rgba(50,171,241, .4)'
+                  },
+                  {
+                    offset: 0,
+                    color: 'rgba(55,70,130, 0)'
+                  }
+                ]),
+                shadowBlur: 60
+              }
+            },
+            data: [
+              {
+                value: 100
+              }
+            ]
+          }
+        ]
+      }
+
+      this.chart.setOption(option, true)
+    },
+
+    /**
+     * 处理窗口大小变化，重绘图表
+     */
+    handleResize() {
+      this.chart?.resize()
+    },
+
+    /**
+     * 外部调用方法：重设图表大小
+     */
+    resizeChart() {
+      this.chart?.resize()
+    }
+  }
+}
+</script>
+
+<style scoped>
+/* 确保图表容器有正确的布局 */
+.chart {
+  overflow: hidden;
+}
+</style>
+```
+
+
 
 ## 饼图总数比例图：PieTotalRateCharts
 
@@ -5272,6 +5786,7 @@ const option = {
 
 <script>
 import * as echarts from 'echarts'
+import 'echarts/theme/macarons' // 引入 'macarons' 主题
 
 export default {
   name: 'PieRoseCharts', // 组件名称设置为 PieRoseCharts
@@ -5306,10 +5821,10 @@ export default {
     chartData: {
       type: Array,
       default: () => [
-        { name: "加工成本", value: 920 },
-        { name: "实验成本", value: 458 },
-        { name: "能源成本", value: 653 },
-        { name: "研发成本", value: 372 }
+        { name: '加工成本', value: 920 },
+        { name: '实验成本', value: 458 },
+        { name: '能源成本', value: 653 },
+        { name: '研发成本', value: 372 }
       ]
     },
     //标题
@@ -5322,8 +5837,8 @@ export default {
   data() {
     return {
       chart: null, // ECharts 实例
-      pieCenter: ['35%', '50%']
-    };
+      pieCenter: ['50%', '50%']
+    }
   },
 
   watch: {
@@ -5331,31 +5846,26 @@ export default {
     chartData: {
       deep: true,
       handler(val) {
-        this.setOptions(val);
+        this.setOptions(val)
       }
-    },
-    // 侦听容器宽高的变化
-    width() {
-      this.$nextTick(() => this.resizeChart());
-    },
-    height() {
-      this.$nextTick(() => this.resizeChart());
     }
   },
 
   mounted() {
     this.$nextTick(() => {
-      this.initChart();
-      window.addEventListener('resize', this.handleResize);
-    });
+      this.initChart(this.chartData)
+      window.addEventListener('resize', this.handleResize)
+    })
   },
 
   beforeDestroy() {
-    window.removeEventListener('resize', this.handleResize);
+    // 销毁 ECharts 实例
     if (this.chart) {
-      this.chart.dispose();
-      this.chart = null;
+      this.chart.dispose()
+      this.chart = null
     }
+    // 移除窗口监听事件
+    window.removeEventListener('resize', this.handleResize)
   },
 
   methods: {
@@ -5363,16 +5873,15 @@ export default {
      * 初始化图表实例
      */
     initChart() {
-      if (!this.$refs.chartRef) return;
+      if (!this.$refs.chartRef) return
 
       if (this.chart) {
-        this.chart.dispose();
-        this.chart = null;
+        this.chart.dispose()
+        this.chart = null
       }
 
-
-      this.chart = echarts.init(this.$refs.chartRef);
-      this.setOptions(this.chartData);
+      this.chart = echarts.init(this.$refs.chartRef, 'macarons')
+      this.setOptions(this.chartData)
     },
 
     /**
@@ -5380,7 +5889,7 @@ export default {
      * @param {Array} data - 从 this.chartData 传入的数据
      */
     setOptions(data) {
-      if (!this.chart) return;
+      if (!this.chart) return
 
       const option = {
         title: {
@@ -5388,7 +5897,7 @@ export default {
           textStyle: {
             color: '#ccc'
           },
-          left:'center'
+          left: 'center'
         },
         color: this.defaultColor,
         tooltip: {
@@ -5399,23 +5908,31 @@ export default {
           textStyle: {
             color: '#FFF'
           },
-          formatter: "{b} <br/> 值: {c} ({d}%)",
+          formatter: '{b} <br/> 值: {c} ({d}%)'
         },
 
         legend: {
           show: true,
-          orient: 'vertical',
-          textStyle: {
-            color: '#FFF',
-          },
+
+          orient: 'horizontal',
+
+          type: 'scroll',
+
+          left: '5%',
           right: '5%',
-          top: 'center',
+          bottom: '5%',
+
+          height: 60,
+
+          textStyle: {
+            color: '#FFF'
+          },
           itemWidth: 10,
           itemHeight: 10,
-          itemGap: 10,
+          itemGap: 10, // 如果名称过长，可以尝试减小到 5
           formatter(name) {
-            return name; // 只显示名称
-          },
+            return name // 只显示名称
+          }
         },
 
         series: [
@@ -5427,7 +5944,7 @@ export default {
             center: this.pieCenter,
             silent: true,
             label: { show: false },
-            data: [{ value: 0, itemStyle: { color: '#FFF' } }],
+            data: [{ value: 0, itemStyle: { color: '#FFF' } }]
           },
           // 背景装饰1 半透明圆 zlevel: 3
           {
@@ -5437,7 +5954,7 @@ export default {
             zlevel: 3,
             silent: true,
             label: { show: false },
-            data: [{ value: 0, itemStyle: { color: 'rgba(255,255,255, 0.1)' } }],
+            data: [{ value: 0, itemStyle: { color: 'rgba(255,255,255, 0.1)' } }]
           },
           // 背景装饰3 半透明底盘 zlevel: 1
           {
@@ -5447,10 +5964,10 @@ export default {
             center: this.pieCenter,
             silent: true,
             label: { show: false },
-            data: [{ value: 0, itemStyle: { color: 'rgba(255,255,255, 0.1)' } }],
+            data: [{ value: 0, itemStyle: { color: 'rgba(255,255,255, 0.1)' } }]
           },
 
-          // 数据源 (主玫瑰图, 已缩小, 百分比修正)
+          // 数据源
           {
             type: 'pie',
             roseType: 'area', // 玫瑰图类型
@@ -5459,17 +5976,17 @@ export default {
             zlevel: 2,
             radius: ['15%', '60%'], // 缩小尺寸
             itemStyle: {
-              borderRadius: 4,
+              borderRadius: 4
             },
             data: data, // 使用传入的数据
             label: {
               normal: {
                 formatter: params => {
-                  const percentage = params.percent.toFixed(1);
+                  const percentage = params.percent.toFixed(1)
                   return (
                     '{icon|●}{name|' + params.name + '}\n{value|' +
-                    params.value + ' (' + percentage + '%)}' // 显示 值 (百分比%)
-                  );
+                  ' (' + percentage + '%)}' // 显示 值 (百分比%)
+                  )
                 },
                 rich: {
                   icon: { fontSize: 16, color: 'inherit' },
@@ -5483,28 +6000,272 @@ export default {
               length2: 10,
               lineStyle: { color: '#fff' }
             }
-          },
-        ],
-      };
+          }
+        ]
+      }
 
-      this.chart.setOption(option, true);
+      this.chart.setOption(option)
     },
 
     /**
      * 处理窗口大小变化，重绘图表
      */
     handleResize() {
-      this.chart?.resize();
+      if (this.chart) {
+        this.chart.resize()
+      }
+    }
+
+  }
+}
+</script>
+
+<style scoped>
+/* 确保图表容器有正确的布局 */
+.chart {
+  overflow: hidden;
+}
+</style>
+```
+
+### vue3
+
+```js
+<template>
+  <div :class="className" :style="{ height, width }" ref="chartRef"></div>
+</template>
+
+<script setup>
+import {ref, onMounted, onBeforeUnmount, watch, nextTick} from 'vue';
+import * as echarts from 'echarts';
+
+// 定义组件的属性 (Props)
+const props = defineProps({
+  className: {
+    type: String,
+    default: 'chart'
+  },
+  width: {
+    type: String,
+    default: '100%'
+  },
+  height: {
+    type: String,
+    default: '100%'
+  },
+  // ECharts 颜色列表
+  defaultColor: {
+    type: Array,
+    default: () => [
+      '#5B8FF9', '#5AD8A6', '#5D7092', '#F6BD16', '#E86A92',
+      '#7262FD', '#269A29', '#8E36BE', '#41A7E2', '#7747A3',
+      '#FF7F50', '#FFDAB9', '#ADFF2F', '#00CED1', '#9370DB',
+      '#3CB371', '#FF69B4', '#FFB6C1', '#DA70D6', '#98FB98',
+      '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
+      '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9'
+    ]
+  },
+  // 核心数据
+  chartData: {
+    type: Array,
+    default: () => [
+      {name: "加工成本", value: 920},
+      {name: "实验成本", value: 458},
+      {name: "能源成本", value: 653},
+      {name: "研发成本", value: 372}
+    ]
+  },
+  // 标题
+  chartTitle: {
+    type: String,
+    default: 'pieRose'
+  }
+});
+
+const chart = ref(null); // ECharts 图表实例
+const chartRef = ref(null); // DOM 元素引用
+const pieCenter = ['35%', '50%']; // 饼图中心点
+
+/**
+ * 处理窗口大小变化，重绘图表
+ */
+const handleResize = () => {
+  chart.value?.resize();
+};
+
+/**
+ * 设置 ECharts 配置项
+ * @param {Array} data - 从 props.chartData 传入的数据
+ */
+const setOptions = (data) => {
+  if (!chart.value) return;
+
+  const option = {
+    title: {
+      text: props.chartTitle,
+      textStyle: {
+        color: '#ccc'
+      },
+      left: 'center'
+    },
+    color: props.defaultColor,
+    tooltip: {
+      show: true,
+      trigger: 'item',
+      backgroundColor: 'transparent', // 完全透明
+      borderWidth: 0,
+      textStyle: {
+        color: '#FFF'
+      },
+      formatter: "{b} <br/> 值: {c} ({d}%)",
     },
 
-    /**
-     * 外部调用方法：重设图表大小
-     */
-    resizeChart() {
-      this.chart?.resize();
-    }
-  }
+    legend: {
+      show: true,
+      orient: 'vertical',
+      textStyle: {
+        color: '#FFF',
+      },
+      right: '5%',
+      top: 'center',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 10,
+      formatter(name) {
+        return name; // 只显示名称
+      },
+    },
+
+    series: [
+      // 背景装饰0 实心白圆 zlevel: 4
+      {
+        type: 'pie',
+        zlevel: 4,
+        radius: ['0%', '7%'],
+        center: pieCenter,
+        silent: true,
+        label: {show: false},
+        data: [{value: 0, itemStyle: {color: '#FFF'}}],
+      },
+      // 背景装饰1 半透明圆 zlevel: 3
+      {
+        type: 'pie',
+        radius: ['0%', '15%'],
+        center: pieCenter,
+        zlevel: 3,
+        silent: true,
+        label: {show: false},
+        data: [{value: 0, itemStyle: {color: 'rgba(255,255,255, 0.1)'}}],
+      },
+      // 背景装饰3 半透明底盘 zlevel: 1
+      {
+        type: 'pie',
+        zlevel: 1,
+        radius: ['0%', '65%'], // 匹配缩小后的外圈大小
+        center: pieCenter,
+        silent: true,
+        label: {show: false},
+        data: [{value: 0, itemStyle: {color: 'rgba(255,255,255, 0.1)'}}],
+      },
+
+      // 数据源 (主玫瑰图, 已缩小, 百分比修正)
+      {
+        type: 'pie',
+        roseType: 'area', // 玫瑰图类型
+        clockwise: false,
+        center: pieCenter,
+        zlevel: 2,
+        radius: ['15%', '60%'], // 缩小尺寸
+        itemStyle: {
+          borderRadius: 4,
+        },
+        data: data, // 使用传入的数据
+        label: {
+          normal: {
+            formatter: params => {
+              const percentage = params.percent.toFixed(1);
+              // 注意：这里使用 {value|...} 时，ECharts 会根据 data 中的 value 自动计算百分比，
+              // 但您的原始代码中 `params.percent` 已经提供，因此保留原始逻辑。
+              return (
+                  '{icon|●}{name|' + params.name + '}\n{value|' +
+                  params.value + ' (' + percentage + '%)}' // 显示 值 (百分比%)
+              );
+            },
+            rich: {
+              icon: {fontSize: 16, color: 'inherit'},
+              name: {fontSize: 18, padding: [0, 0, 0, 10], color: '#fff'},
+              value: {fontSize: 14, padding: [10, 0, 0, 20], color: '#fff'}
+            }
+          }
+        },
+        labelLine: {
+          length: 10,
+          length2: 10,
+          lineStyle: {color: '#fff'}
+        }
+      },
+    ],
+  };
+
+  // 使用 setOption 更新图表，第二个参数 true 表示不合并配置
+  chart.value.setOption(option, true);
 };
+
+/**
+ * 初始化图表实例
+ * @param {Array} data - 从 props.chartData 传入的数据
+ */
+const initChart = (data) => {
+  if (!chartRef.value) return;
+
+  // 销毁旧的图表实例
+  if (chart.value) {
+    chart.value.dispose();
+    chart.value = null;
+  }
+
+  // 初始化 ECharts 实例
+  chart.value = echarts.init(chartRef.value);
+  setOptions(data);
+};
+
+// 监听数据变化，重新渲染图表
+watch(
+    () => props.chartData,
+    (newData) => {
+      // 确保在数据变化后更新图表配置
+      setOptions(newData);
+    },
+    {deep: true} // 深度侦听数组内容变化
+);
+
+watch([() => props.width, () => props.height], () => {
+  nextTick(() => handleResize());
+});
+
+
+onMounted(() => {
+  // $nextTick 在 setup/onMounted 中不再是强制必需的，但为了安全起见（确保 DOM 已渲染），可以保留
+  nextTick(() => {
+    initChart(props.chartData);
+    // 注册窗口大小变化事件监听
+    window.addEventListener('resize', handleResize);
+  });
+});
+
+onBeforeUnmount(() => {
+  // 移除窗口大小变化事件监听
+  window.removeEventListener('resize', handleResize);
+  if (chart.value) {
+    // 销毁 ECharts 实例
+    chart.value.dispose();
+    chart.value = null;
+  }
+});
+
+defineExpose({
+  resizeChart: handleResize // 暴露重设图表大小的方法
+});
 </script>
 
 <style scoped>
@@ -6519,6 +7280,427 @@ onBeforeUnmount(() => {
 
 
 # 雷达图
+
+## 颜色雷达图：RadarColorCharts
+
+![YY_2025-11-12_22-42-43](assets/YY_2025-11-12_22-42-43.png)
+
+### js
+
+```js
+// 数据配置
+const indicator = ['小型车', '中型车', '大型车', '货车', '特种车', '贵宾车'];
+
+const datas = [
+	{
+		name: 'SOC',
+		values: [3600, 3900, 4300, 4700, 3800, 4200],
+		color: '#FA9D47'
+	},
+	{
+		name: '电流',
+		values: [4300, 4700, 3600, 3900, 3800, 4200],
+		color: '#0496FF'
+	},
+	{
+		name: '电压',
+		values: [3200, 3000, 3400, 2000, 3900, 2000],
+		color: '#00FBFF'
+	}
+];
+
+// 动态生成 series 数据
+const seriesData = datas.map(item => ({
+	value: item.values,
+	name: item.name,
+	itemStyle: {
+		color: item.color,
+		opacity: 0.8,
+		borderWidth: 1,
+		borderColor: item.color,
+	},
+	lineStyle: {
+		color: item.color,
+	},
+	areaStyle: {
+		color: item.color,
+		opacity: 0.5,
+	}
+}));
+
+// 动态生成图例数据
+const legendData = datas.map(item => item.name);
+
+// 动态生成颜色数组
+const colorArray = datas.map(item => item.color);
+
+// ECharts 配置
+const option = {
+	backgroundColor: '#0e2147',
+	color: colorArray,
+	tooltip: {
+		backgroundColor: 'rgba(3, 9, 24, 1)',
+		textStyle: {
+			color: 'rgba(255, 255, 255, 1)',
+		},
+	},
+	legend: {
+		orient: 'horizontal',
+		icon: 'rectangle',
+		data: legendData,
+		top: 0,
+		left: 0,
+		itemWidth: 14,
+		itemHeight: 14,
+		itemGap: 21,
+		textStyle: {
+			fontSize: 14,
+			color: '#fff',
+		},
+	},
+	grid: {
+		top: 53,
+		left: 5,
+		right: 0,
+		bottom: 0,
+		containLabel: true,
+	},
+	radar: {
+		radius: ['0', '65%'],
+		center: ['50%', '56%'],
+		axisName: {
+			color: '#fff',
+			fontSize: 14,
+		},
+		splitNumber: 1,
+		indicator: indicator.map(name => ({ name })),
+		splitArea: {
+			show: true,
+			areaStyle: {
+				color: ['rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.2)'],
+			},
+		},
+		axisLine: {
+			lineStyle: {
+				color: '#ffffff',
+				opacity: 0.1,
+			},
+		},
+		splitLine: {
+			lineStyle: {
+				color: '#fff',
+				opacity: 0.4,
+				width: 3,
+				shadowColor: '#0496FF',
+				shadowBlur: 10,
+				shadowOffsetY: 15,
+			},
+		},
+	},
+	series: [
+		{
+			type: 'radar',
+			symbolSize: 8,
+			data: seriesData
+		},
+	],
+};
+```
+
+### vue3
+
+```js
+<template>
+  <div :class="className" :style="{ height, width }" ref="chartRef"/>
+</template>
+
+<script setup>
+import {ref, onMounted, onBeforeUnmount, watch, nextTick} from 'vue'
+import * as echarts from 'echarts'
+
+const props = defineProps({
+  className: {type: String, default: 'chart'},
+  width: {type: String, default: '100%'},
+  height: {type: String, default: '100%'},
+  chartData: {
+    type: Object,
+    default: () => ({
+      indicators: ['小型车', '中型车', '大型车', '货车', '特种车', '贵宾车'],
+      datas: [
+        {name: 'SOC', values: [3600, 3900, 4300, 4700, 3800, 4200]},
+        {name: '电流', values: [4300, 4700, 3600, 3900, 3800, 4200]},
+        {name: '电压', values: [3200, 3000, 3400, 2000, 3900, 2000]}
+      ]
+    })
+  },
+  defaultColor: {
+    type: Array,
+    default: () => ['#FA9D47', '#0496FF', '#00FBFF', '#4BFFFC', '#816d85', '#FFB74A']
+  },
+  legendPosition: {
+    type: Object,
+    default: () => ({top: 'center', right: 10})
+  },
+  radarCenter: {
+    type: Array,
+    default: () => ['50%', '50%']
+  },
+  radarRadius: {
+    type: Array,
+    default: () => ['0', '65%']
+  },
+  chartName: {type: String, default: '车辆雷达图'},
+})
+
+const chart = ref(null)
+const chartRef = ref(null)
+let resizeObserver = null
+
+// 用于存储 buildSeries 的结果，以便在 tooltip formatter 中访问
+const currentBuildResult = ref(null)
+
+// 检查数组中所有值是否都为0
+const allValuesAreZero = (values) => {
+  return values.every(v => Number(v) === 0)
+}
+
+// 构建 series
+const buildSeries = (indicators, datas) => {
+  const validIndicatorIndexes = []
+  indicators.forEach((indicator, index) => {
+    const hasValidData = datas.some(series => Number(series.values[index]) !== 0)
+    if (hasValidData) {
+      validIndicatorIndexes.push(index)
+    }
+  })
+
+  if (validIndicatorIndexes.length === 0) {
+    return {series: [], indicators: [], legendData: [], colorArray: []}
+  }
+
+  const filteredIndicators = validIndicatorIndexes.map(index => indicators[index])
+  const filteredDatas = datas.map((series, idx) => ({
+    name: series.name,
+    values: validIndicatorIndexes.map(index => series.values[index]),
+    color: props.defaultColor[idx % props.defaultColor.length]
+  }))
+
+  const allValues = filteredDatas.flatMap(d => d.values)
+  const absoluteMax = allValues.length > 0 ? Math.max(...allValues) : 0
+
+  let max
+  if (absoluteMax === 0) {
+    max = 100
+  } else if (absoluteMax < 10) {
+    max = Math.ceil(absoluteMax) + 1
+  } else if (absoluteMax < 100) {
+    max = Math.ceil(absoluteMax / 10) * 10
+  } else if (absoluteMax < 500) {
+    max = Math.ceil(absoluteMax / 50) * 50
+  } else {
+    max = Math.ceil(absoluteMax / 100) * 100
+  }
+
+  // 确保 max 留有缓冲区
+  if (max <= absoluteMax) {
+    max = absoluteMax + Math.max(1, Math.ceil(absoluteMax * 0.1));
+  }
+
+
+  const indicatorObjects = filteredIndicators.map(name => ({name, max}))
+
+  const seriesData = filteredDatas
+      .filter(item => !allValuesAreZero(item.values))
+      .map(item => ({
+        value: item.values,
+        name: item.name,
+        itemStyle: {
+          color: item.color,
+          opacity: 0.8,
+          borderWidth: 1,
+          borderColor: item.color,
+        },
+        lineStyle: {
+          color: item.color,
+        },
+        areaStyle: {
+          color: item.color,
+          opacity: 0.5,
+        }
+      }))
+
+  const finalDatas = filteredDatas.filter(item => !allValuesAreZero(item.values))
+  const legendData = finalDatas.map(item => item.name)
+  const colorArray = finalDatas.map(item => item.color)
+
+  return {
+    series: seriesData,
+    indicators: indicatorObjects,
+    legendData,
+    colorArray
+  }
+}
+
+// 初始化图表
+const initChart = () => {
+  if (!props.chartData || !props.chartData.indicators || !props.chartData.datas || !chartRef.value) return
+
+  if (chart.value) {
+    chart.value.dispose()
+    chart.value = null
+  }
+
+  chart.value = echarts.init(chartRef.value)
+
+  const {indicators, datas} = props.chartData
+  const buildResult = buildSeries(indicators, datas)
+  currentBuildResult.value = buildResult // 存储结果供 tooltip 使用
+
+  const option = {
+    title: {
+      text: props.chartName,
+      textStyle: {color: '#00E4FF', fontSize: 16},
+      top: '5%',
+      left: '2%'
+    },
+    color: buildResult.colorArray,
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: 'rgba(3, 9, 24, 1)',
+      textStyle: {
+        color: 'rgba(255, 255, 255, 1)',
+      },
+      // 核心优化：使用 params.name 作为系列名称
+      formatter: (params) => {
+        const result = currentBuildResult.value
+        if (!result) return ''
+
+        // 🚨 修正点：使用 params.name (数据项的 name) 作为系列名称，
+        // 在雷达图 trigger: 'item' 下，params.name 是 seriesData 内部的 name 属性。
+        const seriesName = params.name
+        const values = params.value
+
+        // 确保颜色图标正确显示
+        const marker = `<span style="display:inline-block;margin-right:4px;border-radius:10px;width:10px;height:10px;background-color:${params.color};"></span>`
+
+        let text = `<strong style="font-size: 16px;">${marker}${seriesName}</strong><br/>`
+
+        values.forEach((v, i) => {
+          const indicator = result.indicators[i]
+          if (indicator && v !== 0) {
+            // 显示指标名称和对应的值
+            text += `${indicator.name}: ${v}<br/>`
+          }
+        })
+        return text
+      }
+    },
+    legend: {
+      orient: 'vertical',
+      icon: 'rectangle',
+      data: buildResult.legendData,
+      top: props.legendPosition.top,
+      right: props.legendPosition.right,
+      itemWidth: 14,
+      itemHeight: 14,
+      itemGap: 21,
+      textStyle: {
+        fontSize: 14,
+        color: '#fff',
+      },
+    },
+    radar: {
+      radius: props.radarRadius,
+      center: props.radarCenter,
+      axisName: {
+        color: '#fff',
+        fontSize: 14,
+      },
+      splitNumber: 4,
+      indicator: buildResult.indicators,
+      splitArea: {
+        show: true,
+        areaStyle: {
+          color: ['rgba(255, 255, 255, 0.05)', 'rgba(255, 255, 255, 0.1)'],
+        },
+      },
+      axisLine: {
+        lineStyle: {
+          color: '#ffffff',
+          opacity: 0.2,
+        },
+      },
+      splitLine: {
+        lineStyle: {
+          color: '#fff',
+          opacity: 0.4,
+          width: 1,
+          shadowColor: '#0496FF',
+          shadowBlur: 5,
+        },
+      },
+    },
+    series: [
+      {
+        type: 'radar',
+        symbolSize: 8,
+        data: buildResult.series,
+        // 额外的配置，可能有助于 tooltip 正确识别 name
+        name: '雷达系列',
+        emphasis: {
+          lineStyle: {
+            width: 4
+          }
+        },
+        label: {
+          show: false
+        }
+      },
+    ],
+  }
+
+  chart.value.setOption(option, true)
+}
+
+// 统一的自适应处理函数
+const handleResize = () => chart.value?.resize()
+
+// 观察容器大小变化
+const observeResize = () => {
+  if (!chartRef.value) return
+  resizeObserver = new ResizeObserver(() => {
+    requestAnimationFrame(handleResize)
+  })
+  resizeObserver.observe(chartRef.value)
+}
+
+onMounted(() => {
+  nextTick(() => {
+    initChart()
+    observeResize()
+  })
+})
+
+onBeforeUnmount(() => {
+  chart.value?.dispose()
+  if (resizeObserver && chartRef.value) {
+    resizeObserver.unobserve(chartRef.value)
+    resizeObserver = null
+  }
+})
+
+watch(() => props.chartData, () => nextTick(initChart), {deep: true})
+</script>
+
+<style scoped>
+.chart {
+  width: 100%;
+  height: 100%;
+}
+</style>
+```
+
+
 
 ## 线性雷达图-RadarCharts
 
@@ -8180,9 +9362,306 @@ watch(
 </style>
 ```
 
+## 词云图：WordCloudCharts
 
+![YY_2025-11-12_22-53-43](assets/YY_2025-11-12_22-53-43.png)
 
+### vue3
 
+```js
+<template>
+  <div :class="className" :style="{ height, width }" ref="chartRef"/>
+</template>
+
+<script setup>
+import {ref, onMounted, onBeforeUnmount, watch, nextTick} from 'vue';
+import * as echarts from 'echarts';
+import 'echarts-wordcloud';
+
+const props = defineProps({
+  className: {
+    type: String,
+    default: 'chart'
+  },
+  width: {
+    type: String,
+    default: '100%'
+  },
+  height: {
+    type: String,
+    default: '100%'
+  },
+  chartName: {
+    type: String,
+    default: '平台统计词云图' // 新增图表名称 prop
+  },
+  chartData: {
+    type: Array,
+    default: () => [
+      {name: '微信', value: 3328},
+      {name: '南方+', value: 1045},
+      {name: '东莞时间网', value: 834},
+      {name: 'i东莞', value: 804},
+      {name: '新浪微博', value: 532},
+      {name: '今日头条', value: 493},
+      {name: '腾讯新闻', value: 479},
+      {name: '东莞阳光网', value: 387},
+      {name: '东莞日报', value: 289},
+      {name: '一点资讯', value: 287},
+      {name: '东方头条网', value: 233},
+      {name: '南方都市报', value: 228},
+      {name: '新粤网', value: 207},
+      {name: '南方plus', value: 206},
+      {name: '网易新闻', value: 201},
+      {name: '东方头条', value: 180},
+      {name: '趣头条', value: 178},
+      {name: '羊城派', value: 151},
+      {name: '东莞时报', value: 143},
+      {name: '莞讯网', value: 139},
+      {name: '广州日报', value: 137},
+      {name: '东莞阳光台', value: 132},
+      {name: '搜狐新闻', value: 129},
+      {name: '今日头条.APP', value: 116},
+      {name: '东莞阳光平台', value: 108},
+      {name: '腾讯新闻.APP', value: 107},
+      {name: '南方网', value: 103},
+      {name: 'UC头条', value: 98},
+      {name: '凤凰新闻', value: 93},
+      {name: '报告诉', value: 77},
+      {name: '网易新闻.APP', value: 74},
+      {name: '中国小康网', value: 64},
+      {name: '东莞万江', value: 63},
+      {name: '信息时报', value: 59},
+      {name: '中国文明网', value: 58},
+      {name: '东莞网', value: 57},
+      {name: '搜狐新闻（自媒体）', value: 54},
+      {name: '南方日报', value: 54},
+      {name: '搜狐焦点', value: 53},
+      {name: '阳光社区', value: 52},
+      {name: '南方plus.APP', value: 47},
+      {name: '阳光望牛墩', value: 46},
+      {name: '中国报道', value: 43},
+      {name: '新浪新闻', value: 43},
+      {name: '房掌柜', value: 39},
+      {name: '广州日报网', value: 38},
+      {name: 'ZAKER', value: 38},
+      {name: '一点资讯.APP', value: 35},
+      {name: '聚焦东莞', value: 35},
+      {name: '广州新闻网', value: 35},
+      {name: '新浪', value: 31},
+      {name: '东莞服务热线12345', value: 31},
+      {name: '人民网', value: 29},
+      {name: '阳光热线问政平台', value: 26},
+      {name: '党报头条', value: 26},
+      {name: '羊城晚报地方版', value: 24},
+      {name: '网易房产', value: 23},
+      {name: '中国网', value: 22},
+      {name: '金羊网', value: 21},
+      {name: '东莞长安', value: 21},
+      {name: '百家号', value: 21},
+      {name: '澎湃新闻', value: 20},
+      {name: '读特', value: 19},
+      {name: '东方头条.APP', value: 17},
+      {name: '阳光石排', value: 16},
+      {name: '新浪乐居', value: 16},
+      {name: '微信邦', value: 16},
+      {name: '搜狐新闻.APP', value: 16},
+      {name: '人民日报', value: 16},
+      {name: '百度新闻', value: 16},
+      {name: '南方都市报.APP', value: 15},
+      {name: '荔枝网', value: 15},
+      {name: '华人头条', value: 15},
+      {name: '广东建设报', value: 15},
+      {name: '中国', value: 14},
+      {name: '阳光黄江', value: 14},
+      {name: '东方网', value: 14},
+      {name: '网易', value: 12},
+      {name: '搜狐网', value: 12},
+      {name: '和讯', value: 12},
+      {name: '文化莞城', value: 11},
+      {name: '聊聊网', value: 11},
+      {name: '58同镇', value: 11},
+      {name: '凤凰网', value: 10},
+      {name: '新浪网', value: 9},
+      {name: '趣头条.APP', value: 9},
+      {name: '凤岗网', value: 9},
+      {name: '新快网_新快报', value: 8},
+      {name: '上游新闻', value: 8},
+      {name: '东莞市城市综合管理局', value: 8},
+      {name: '大众网', value: 8},
+      {name: '中国新闻网', value: 7},
+      {name: '第一推', value: 7},
+      {name: '大洋网', value: 7},
+      {name: '新浪网', value: 6},
+      {name: '新浪看点', value: 6},
+      {name: '手机和讯网', value: 6},
+    ]
+  },
+  sizeRange: {
+    type: Array,
+    default: () => [12, 50] // 字体大小范围 [最小, 最大]
+  },
+  rotationRange: {
+    type: Array,
+    default: () => [0, 0] // 词语旋转角度范围
+  },
+  gridSize: {
+    type: Number,
+    default: 20 // 词语之间的间距
+  }
+});
+
+const chart = ref(null); // 图表实例
+const chartRef = ref(null); // DOM 引用
+
+// 随机颜色函数，参考您提供的 JS 逻辑
+const randcolor = () => {
+  let r = 100 + ~~(Math.random() * 100);
+  let g = 135 + ~~(Math.random() * 100);
+  let b = 100 + ~~(Math.random() * 100);
+  return `rgb(${r}, ${g}, ${b})`
+};
+
+// 初始化图表
+const initChart = (data) => {
+  if (!data || data.length === 0) {
+    // 销毁旧实例并防止初始化空图表
+    if (chart.value) {
+      chart.value.dispose();
+      chart.value = null;
+    }
+    return;
+  }
+
+  // 确保 DOM 元素存在，并初始化 ECharts 实例
+  if (!chart.value) {
+    chart.value = echarts.init(chartRef.value);
+  } else {
+    chart.value.clear(); // 清除旧配置
+  }
+
+  const option = {
+    // 1. 标题 (参考 Vue 模板中的新增)
+    title: {
+      show: true,
+      text: props.chartName,
+      textStyle: {
+        fontSize: 16,
+        color: '#ffffff',
+      },
+      top: '5%',
+      left: '5%',
+    },
+
+    // 2. 背景颜色 (参考您提供的 JS 逻辑)
+    // backgroundColor: 'rgba(0,0,0,.5)',
+
+    // 3. Tooltip (参考您提供的 JS 逻辑)
+    tooltip: {
+      trigger: 'item',
+      padding: [10, 15],
+      textStyle: {
+        fontSize: 14 ,// 调整字体大小以适应常规需求
+        color: 'white',
+      },
+      backgroundColor: 'transparent', // 使用 backgroundColor 而不是 background
+      borderColor: 'transparent',     // 同时设置边框透明
+
+      formatter: params => {
+        const {name, value} = params
+        return `
+          ${name} <br/>
+          ${value}
+        `
+      }
+    },
+
+    // 4. Series (词云图核心配置)
+    series: [{
+      type: 'wordCloud', // 核心类型
+
+      // 样式和布局配置 (使用 props 或默认值)
+      gridSize: props.gridSize,
+      sizeRange: props.sizeRange,
+      rotationRange: props.rotationRange,
+      shape: 'circle',
+
+      // 确保词云图在容器内居中
+      center: ['50%', '50%'],
+      // 词云图的宽高比，可根据实际需求调整，例如：
+      // width: '90%',
+      // height: '90%',
+
+      // 文本样式
+      textStyle: {
+        normal: {
+          color: params => {
+            // 使用随机颜色函数
+            return randcolor()
+          }
+        },
+        emphasis: {
+          shadowBlur: 10,
+          shadowColor: '#333'
+        }
+      },
+
+      // 数据
+      data: data
+    }]
+  };
+
+  chart.value.setOption(option);
+};
+
+// 处理窗口大小变化
+const handleResize = () => {
+  chart.value?.resize();
+};
+
+onMounted(() => {
+  nextTick(() => {
+    initChart(props.chartData);
+    window.addEventListener('resize', handleResize);
+  });
+});
+
+onBeforeUnmount(() => {
+  if (chart.value) {
+    chart.value.dispose();
+    chart.value = null;
+  }
+  window.removeEventListener('resize', handleResize);
+});
+
+// 监听数据变化，重新渲染图表
+watch(
+    () => props.chartData,
+    (newData) => {
+      initChart(newData);
+    },
+    {deep: true}
+);
+
+// 监听其他配置变化 (如 sizeRange, rotationRange)，重新渲染图表
+watch(
+    () => [props.sizeRange, props.rotationRange, props.gridSize, props.chartName],
+    () => {
+      initChart(props.chartData);
+    },
+    {deep: true}
+);
+</script>
+
+<style scoped>
+.chart {
+  /* 确保 padding 被包含在宽度和高度内，并防止图表内容被遮挡 */
+  padding: 10px;
+  box-sizing: border-box;
+  min-height: 200px; /* 确保有一个最小高度 */
+}
+</style>
+```
 
 
 
@@ -9499,6 +10978,499 @@ watch(() => props.defaultIndexName, () => {
 }
 </style>
 ```
+
+## 中国地图：Map
+
+### js
+
+![YY_2025-11-12_19-15-48](assets/YY_2025-11-12_19-15-48.png)
+
+```js
+$.get("https://www.isqqw.com/asset/get/areas_v3/country/china.json", function (geoJson) {
+   echarts.registerMap('china', geoJson);
+
+   // 颜色分段 
+   const piecesArr = [
+      { "gt": 0, "lte": 100000 },
+      { "gt": 1000000, "lte": 2000000 },
+      { "gt": 2000000, "lte": 2927660.8 }
+   ]
+
+   // 数据一(指标一)
+   const data1 = [
+      { "name": "上海", "value": 657302.9 },
+      { "name": "云南", "value": 1489763.6 },
+      { "name": "内蒙古", "value": 862482.3 },
+      { "name": "北京", "value": 663328.94 },
+      { "name": "吉林", "value": 779295.75 },
+      { "name": "四川", "value": 2048079.2 },
+      { "name": "天津", "value": 455043.28 },
+      { "name": "宁夏", "value": 222223.42 },
+      { "name": "安徽", "value": 1592868.6 },
+      { "name": "山东", "value": 2630549 },
+      { "name": "山西", "value": 1099772.9 },
+      { "name": "广东", "value": 2927660.8 },
+      { "name": "广西", "value": 1282567.5 },
+      { "name": "新疆", "value": 659506.8 },
+      { "name": "江苏", "value": 2354819 },
+      { "name": "江西", "value": 1150544.6 },
+      { "name": "河北", "value": 1965350.9 },
+      { "name": "河南", "value": 2470593.5 },
+      { "name": "浙江", "value": 2163092.8 },
+      { "name": "海南", "value": 397059.06 },
+      { "name": "湖北", "value": 1565900.9 },
+      { "name": "湖南", "value": 2092109.1 },
+      { "name": "甘肃", "value": 763275.5 },
+      { "name": "福建", "value": 1380749.4 },
+      { "name": "西藏", "value": 116266.336 },
+      { "name": "贵州", "value": 1310614.2 },
+      { "name": "辽宁", "value": 1078151 },
+      { "name": "重庆", "value": 917342.5 },
+      { "name": "陕西", "value": 1181931 },
+      { "name": "青海", "value": 187443.44 },
+      { "name": "黑龙江", "value": 879319.1 }
+   ]
+
+   // 计算data1所有value的总和
+   const totalValue = data1.reduce((sum, item) => sum + item.value, 0);
+   // 为每个数据项添加占比属性（保留2位小数）
+   const data1WithPercent = data1.map(item => ({
+      ...item,
+      percent: ((item.value / totalValue) * 100).toFixed(2)
+   }));
+
+   option = {
+      animation: false,
+      backgroundColor: 'transparent',
+      toolbox: {
+         show: true,
+         feature: {
+            saveAsImage: {
+               type: "png",
+               backgroundColor: "transparent"
+            },
+            // 1. 添加重置按钮：恢复地图初始缩放和位置
+            restore: {
+               show: true,
+               title: "重置地图" // 鼠标悬停时的提示文字
+            }
+         }
+      },
+      tooltip: {
+         trigger: "item",
+         backgroundColor: 'rgba(255, 255, 255, 0.8)',
+         borderColor: 'transparent',
+         padding: 10,
+         textStyle: { color: '#333' },
+         formatter: function(params) {
+            return `
+               <div>${params.name}</div>
+               <div>数值：${params.data.value.toLocaleString()}</div>
+               <div>占比：${params.data.percent}%</div>
+               <div>总计：${totalValue.toLocaleString()}</div>
+            `;
+         }
+      },
+      textStyle: {
+         fontFamily: "'Microsoft YaHei', sans-serif"
+      },
+      geo: {
+         map: "china",
+         label: { show: false }, // 由series控制省份名称显示
+         zoom: 1.2,
+         roam: true,
+         zoomLimit: { min: 0.8, max: 3 },
+         itemStyle: {
+            borderWidth: 0.3,
+            shadowColor: "transparent"
+         },
+         emphasis: {
+            itemStyle: {
+               borderWidth: 0.8,
+               shadowColor: "rgba(0, 0, 0, 0.5)",
+               shadowBlur: 2
+            }
+         }
+      },
+      legend: { show: false },
+      visualMap: {
+         seriesIndex: 0,
+         type: "piecewise",
+         left: "left",
+         top: "66%",
+         inverse: true,
+         pieces: piecesArr,
+         textStyle: {
+            color: "#333",
+            fontSize: 12,
+            fontWeight: "normal"
+         },
+         itemWidth: 20,
+         itemHeight: 14,
+         itemGap: 5,
+         showLabel: true,
+         inRange: {
+            color: ["#eaf4f9", "#c5e1ee", "#94c6e0", "#5da5d2", "#2b7fb7", "#00599a"]
+         },
+         outOfRange: { color: "#f0f0f0" },
+         splitNumber: 0,
+         calculable: false
+      },
+      series: [
+         {
+            name: "上半年累计销量",
+            type: "map",
+            geoIndex: 0,
+            map: "china",
+            zoom: 1.2,
+            data: data1WithPercent,
+            aspectScale: 0.75,
+            // 2. 确保所有省份显示名称（核心配置）
+            label: {
+               show: true, // 强制显示省份名称
+               color: "#333", // 名称颜色
+               fontSize: 10, // 字体大小（适配不同省份大小）
+               fontWeight: "normal",
+               position: "inside", // 名称显示在省份内部
+               // 防止文字重叠，小省份自动隐藏（可根据需要调整）
+               formatter: function(params) {
+                  // 对面积较小的省份（如上海、北京）强制显示
+                  const smallAreas = ["上海", "北京", "天津", "重庆", "海南", "宁夏", "青海", "西藏"];
+                  if (smallAreas.includes(params.name)) {
+                     return params.name;
+                  }
+                  return params.name; // 所有省份都显示
+               }
+            },
+            itemStyle: {
+               borderColor: "#fff",
+               borderWidth: 0.3,
+               shadowColor: "transparent",
+               shadowBlur: 0
+            },
+            emphasis: {
+               label: {
+                  color: "#000",
+                  fontSize: 12,
+                  fontWeight: "bold"
+               },
+               itemStyle: {
+                  borderColor: "#fff",
+                  borderWidth: 0.8,
+                  shadowColor: "rgba(0, 0, 0, 0.6)",
+                  shadowBlur: 3
+               }
+            }
+         }
+      ],
+      title: {
+         text: "",
+         left: "center",
+         textStyle: {
+            fontSize: 18,
+            fontWeight: "bold",
+            color: "#333333"
+         },
+         padding: [10, 0, 0, 0]
+      }
+   };
+
+   myChart.setOption(option);
+})
+```
+
+### vue3
+
+```js
+<template>
+  <div :class="className" :style="{ height, width }" ref="chartRef"/>
+</template>
+
+<script setup>
+import {ref, onMounted, onBeforeUnmount, watch, nextTick} from 'vue';
+import * as echarts from 'echarts';
+import chinaGeoJson from './china.json';
+
+const props = defineProps({
+  className: {
+    type: String,
+    default: 'china-map-chart'
+  },
+  width: {
+    type: String,
+    default: '100%'
+  },
+  height: {
+    type: String,
+    default: '100%'
+  },
+  chartName: {
+    type: String,
+    default: '中国省份数据地图'
+  },
+  // 省份数据
+  chartsData: {
+    type: Array,
+    default: () => [
+      {"name": "上海", "value": 657302.9},
+      {"name": "云南", "value": 1489763.6},
+      {"name": "内蒙古", "value": 862482.3},
+      {"name": "北京", "value": 663328.94},
+      {"name": "吉林", "value": 779295.75},
+      {"name": "四川", "value": 2048079.2},
+      {"name": "天津", "value": 455043.28},
+      {"name": "宁夏", "value": 222223.42},
+      {"name": "安徽", "value": 1592868.6},
+      {"name": "山东", "value": 2630549},
+      {"name": "山西", "value": 1099772.9},
+      {"name": "广东", "value": 2927660.8},
+      {"name": "广西", "value": 1282567.5},
+      {"name": "新疆", "value": 659506.8},
+      {"name": "江苏", "value": 2354819},
+      {"name": "江西", "value": 1150544.6},
+      {"name": "河北", "value": 1965350.9},
+      {"name": "河南", "value": 2470593.5},
+      {"name": "浙江", "value": 2163092.8},
+      {"name": "海南", "value": 397059.06},
+      {"name": "湖北", "value": 1565900.9},
+      {"name": "湖南", "value": 2092109.1},
+      {"name": "甘肃", "value": 763275.5},
+      {"name": "福建", "value": 1380749.4},
+      {"name": "西藏", "value": 116266.336},
+      {"name": "贵州", "value": 1310614.2},
+      {"name": "辽宁", "value": 1078151},
+      {"name": "重庆", "value": 917342.5},
+      {"name": "陕西", "value": 1181931},
+      {"name": "青海", "value": 187443.44},
+      {"name": "黑龙江", "value": 879319.1}
+    ]
+  },
+  // 动态分段数量（可自定义）
+  segmentCount: {
+    type: Number,
+    default: 5 // 默认分成5段
+  },
+  initialZoom: {
+    type: Number,
+    default: 1.2
+  },
+  zoomLimit: {
+    type: Object,
+    default: () => ({min: 0.8, max: 3})
+  }
+});
+
+const chart = ref(null);
+const chartRef = ref(null);
+
+// 处理数据：计算总和、百分比及动态分段
+const processData = (data) => {
+  // 过滤有效数据
+  const validData = data.filter(item => item.name && item.value !== undefined && item.value !== null)
+      .map(item => ({...item, value: Number(item.value)}));
+
+  // 提取所有值用于计算分段
+  const values = validData.map(item => item.value);
+  const totalValue = values.reduce((sum, val) => sum + val, 0);
+
+  // 计算动态分段（核心逻辑）
+  let pieces = [];
+  if (values.length > 0) {
+    const minVal = Math.min(...values);
+    const maxVal = Math.max(...values);
+    const segmentSize = (maxVal - minVal) / props.segmentCount; // 每段间隔
+
+    // 生成分段配置
+    for (let i = 0; i < props.segmentCount; i++) {
+      const start = minVal + i * segmentSize;
+      const end = minVal + (i + 1) * segmentSize;
+
+      // 处理边界值（第一段从0开始，最后一段包含最大值以上）
+      const piece = i === 0
+          ? {gt: 0, lte: end, label: `${formatNumber(0)}-${formatNumber(end)}`}
+          : i === props.segmentCount - 1
+              ? {gt: start, lte: maxVal, label: `${formatNumber(start)}-${formatNumber(maxVal)}`}
+              : {gt: start, lte: end, label: `${formatNumber(start)}-${formatNumber(end)}`};
+
+      pieces.push(piece);
+    }
+  }
+
+  // 处理每项数据的百分比
+  const processedData = validData.map(item => ({
+    ...item,
+    percent: totalValue ? ((item.value / totalValue) * 100).toFixed(2) : '0.00'
+  }));
+
+  return {processedData, totalValue, pieces};
+};
+
+// 格式化数字显示（添加单位）
+const formatNumber = (num) => {
+  if (num >= 10000) return (num / 10000).toFixed(1) + '万';
+  return num.toFixed(0);
+};
+
+// 初始化图表
+const initChart = () => {
+  const {processedData, totalValue, pieces} = processData(props.chartsData);
+
+  if (!chartRef.value) return;
+
+  if (chart.value) chart.value.dispose();
+  chart.value = echarts.init(chartRef.value);
+
+  echarts.registerMap('china', chinaGeoJson);
+
+  const option = {
+    animation: false,
+    backgroundColor: 'transparent',
+    toolbox: {
+      show: true,
+      feature: {
+        saveAsImage: {type: "png", backgroundColor: "transparent"},
+        restore: {show: true, title: "重置地图"}
+      }
+    },
+    tooltip: {
+      trigger: "item",
+      backgroundColor: 'rgba(255, 255, 255, 0.8)',
+      borderColor: 'transparent',
+      padding: 10,
+      textStyle: {color: '#333'},
+      formatter: function (params) {
+        if (!params.data) return '';
+        const {name, value, percent} = params.data;
+        return `
+          <div>${name || '未知省份'}</div>
+          <div>数值：${value !== undefined ? value.toLocaleString() : '0'}</div>
+          <div>占比：${percent || '0.00'}%</div>
+          <div>总计：${totalValue.toLocaleString()}</div>
+        `;
+      }
+    },
+    textStyle: {
+      fontFamily: "'Microsoft YaHei', sans-serif"
+    },
+    geo: {
+      map: "china",
+      label: {show: false},
+      zoom: props.initialZoom,
+      roam: true,
+      zoomLimit: props.zoomLimit,
+      itemStyle: {
+        borderWidth: 0.3,
+        shadowColor: "transparent"
+      },
+      emphasis: {
+        itemStyle: {
+          borderWidth: 0.8,
+          shadowColor: "rgba(0, 0, 0, 0.5)",
+          shadowBlur: 2
+        }
+      }
+    },
+    legend: {show: false},
+    // 使用动态生成的分段
+    visualMap: {
+      seriesIndex: 0,
+      type: "piecewise",
+      left: "left",
+      top: "66%",
+      inverse: true,
+      pieces: pieces, // 动态分段
+      textStyle: {color: "#333", fontSize: 12},
+      itemWidth: 20,
+      itemHeight: 14,
+      itemGap: 5,
+      showLabel: true,
+      inRange: {
+        color: ["#eaf4f9", "#c5e1ee", "#94c6e0", "#5da5d2", "#2b7fb7", "#00599a"]
+      },
+      outOfRange: {color: "#f0f0f0"},
+      calculable: false
+    },
+    series: [
+      {
+        name: props.chartName,
+        type: "map",
+        geoIndex: 0,
+        map: "china",
+        zoom: props.initialZoom,
+        data: processedData,
+        aspectScale: 0.75,
+        label: {
+          show: true,
+          color: "#333",
+          fontSize: 10,
+          position: "inside"
+        },
+        itemStyle: {
+          borderColor: "#fff",
+          borderWidth: 0.3
+        },
+        emphasis: {
+          label: {color: "#000", fontSize: 12, fontWeight: "bold"},
+          itemStyle: {
+            borderColor: "#fff",
+            borderWidth: 1,
+            shadowColor: "rgba(0, 0, 0, 0.8)",
+            shadowBlur: 5
+          }
+        }
+      }
+    ],
+    title: {
+      text: props.chartName,
+      left: "center",
+      textStyle: {fontSize: 18, fontWeight: "bold", color: "#333"},
+      padding: [10, 0, 0, 0]
+    }
+  };
+
+  chart.value.setOption(option);
+};
+
+const handleResize = () => {
+  chart.value?.resize();
+};
+
+onMounted(() => {
+  nextTick(() => {
+    initChart();
+    window.addEventListener('resize', handleResize);
+  });
+});
+
+onBeforeUnmount(() => {
+  if (chart.value) chart.value.dispose();
+  window.removeEventListener('resize', handleResize);
+});
+
+// 监听数据变化，重新计算分段
+watch(
+    () => props.chartsData,
+    () => initChart(),
+    {deep: true}
+);
+
+// 监听分段数量变化
+watch(
+    () => [props.segmentCount, props.initialZoom, props.zoomLimit, props.chartName],
+    () => initChart(),
+    {deep: true}
+);
+</script>
+
+<style scoped>
+.china-map-chart {
+  box-sizing: border-box;
+  min-height: 500px;
+}
+</style>
+```
+
+
 
 # 工具
 
