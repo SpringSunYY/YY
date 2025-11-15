@@ -4336,6 +4336,301 @@ watch(
 
 # 饼图
 
+## 饼图双层总数比例图：PieLayerRateCharts
+
+![img](assets/{3C579C5E-8248-4ED2-835C-5C2EB58CAF93})
+
+### js
+
+```js
+// 基础颜色配置（循环使用）
+var colorList = ['#018CFF', 'FCAF03', '#1DBB67', '#FF586C'];
+
+var data = [
+    { "name": "场馆运行", "value": 5 },
+    { "name": "场馆安全", "value": 5 },
+    { "name": "医疗服务安全", "value": 6 },
+    { "name": "技术故障1", "value": 3 },
+    { "name": "场馆运行1", "value": 5 },
+    { "name": "场馆安全1", "value": 5 },
+    { "name": "医疗服务安全1", "value": 6 },
+    { "name": "技术故障2", "value": 3 },
+     { "name": "场馆运行321", "value": 5 },
+];
+
+// 动态生成颜色数组（根据数据量自动循环）
+function generateColorList(baseColors, dataLength) {
+    let result = [];
+    for (let i = 0; i < dataLength; i++) {
+        result.push(baseColors[i % baseColors.length]);
+        result.push(''); // 间隔
+    }
+    return result;
+}
+
+function generateColorList2(baseColors, dataLength) {
+    let result = [];
+    for (let i = 0; i < dataLength; i++) {
+        const color = baseColors[i % baseColors.length];
+        const hex = color.startsWith('#') ? color.slice(1) : color;
+        const rgba = hex.match(/.{2}/g).map(x => parseInt(x, 16));
+        result.push(`rgba(${rgba[0]},${rgba[1]},${rgba[2]}, 0.4)`);
+        result.push(''); // 间隔
+    }
+    return result;
+}
+
+const colorList1 = generateColorList(colorList, data.length);
+const colorList2 = generateColorList2(colorList, data.length);
+
+let valueSum = 0;
+let optionData = []
+data.forEach(item => {
+    valueSum += item.value; 
+    // 构建 optionData（与上一次保持一致）
+    optionData.push({ value: item.value, name: item.name }); 
+    optionData.push({ name: '', value: valueSum / 100, itemStyle: { color: 'transparent' } });
+})
+
+const valueOnlyData = data.map(item => item.value);
+
+// 【优化 1】定义饼图中心，实现水平和垂直居中（为底部图例留出空间）
+const PIE_CENTER = ['50%', '45%']; 
+
+// 【优化 2】整体尺寸增加约 10%
+const RADIUS_INNER_RING = ['28%', '39%'];   // 原 ['25%', '35%']
+const RADIUS_OUTER_RING = ['42%', '44%'];   // 原 ['38%', '40%']
+const RADIUS_DECORATION_1 = ['48.5%', '48.7%']; // 原 ['44%', '44.2%']
+const RADIUS_DECORATION_2 = ['48.5%', '49.1%']; // 原 ['44%', '44.6%']
+
+
+var option = {
+    backgroundColor: '#243c54',
+    tooltip: {
+        trigger: 'item',
+        backgroundColor: 'transparent',
+        borderColor: 'transparent',
+        textStyle: {
+            color: '#fff'
+        },
+        formatter: function (params) {
+            if (params.name === '') {
+                return '';
+            }
+            
+            const value = params.value;
+            const percent = ((value / valueSum) * 100).toFixed(2); 
+            
+            return `${params.name}<br/>
+                    数值：${value} (${percent}%)`;
+        }
+    },
+    title: {
+        text: '{a|' + valueSum + '}{b|\n事件总数}',
+        // 【优化 1】标题居中，并对齐新的饼图中心
+        left: '49%', 
+        top: '42%', 
+        itemGap: 10,
+        textStyle: {
+            rich: {
+                a: {
+                    color: '#2793FF',
+                    fontSize: 30,
+                    fontWeight: 600
+                },
+                b: {
+                    color: '#485373',
+                    fontSize: 14,
+                }
+            },
+        },
+        textAlign: 'center',
+    },
+
+   legend: {
+    show: true,
+    icon: 'none',
+
+    orient: 'horizontal', 
+    
+    // 【调整】图例位置
+    bottom: '10%', 
+    left: 'center', 
+    type: 'scroll',
+    // 【关键】设置最大高度，使其能容纳两行文字
+    // 40 应该是足够的，但如果字体较大，可能需要微调到 45 或 50
+    maxHeight: 50, 
+    
+    itemWidth: 12,
+    itemHeight: 12,
+    // 增加间距，让 ECharts 更倾向于换行
+    itemGap: 1, 
+    
+    inactiveColor: '#666',
+    // 分页配置保持不变
+    pageButtonItemGap: 1,
+    pageButtonGap: 1,
+    pageIconColor: '#2793FF',
+    pageIconInactiveColor: '#666',
+    pageIconSize: 12,
+    pageTextStyle: {
+        color: '#FFF',
+        fontSize: 12
+    },
+    formatter: (name) => {
+        let obj = data.find(item => item.name === name)
+        const arr = [
+            // 使用富文本的 padding 来控制项目间距
+            `{iconName|}{name|${name}}` 
+        ];
+        return arr.join('')
+    },
+    textStyle: {
+        color: '#FFF',
+        fontSize: 16, 
+        rich: {
+            name: {
+                color: 'inherit', 
+                fontSize: 16,
+                width: 80,
+                padding: [0, 5, 0, 5],
+            },
+        }
+    },
+        data: data.map((dItem, dIndex) => {
+            return {
+                name: dItem.name,
+                textStyle: {
+                    rich: {
+                        iconName: {
+                            width: 16,
+                            height: 16,
+                            borderRadius: 2,
+                            backgroundColor: colorList[dIndex % colorList.length], 
+                        },
+                    }
+                },
+            }
+        }),
+    },
+
+    series: [
+        {
+            // 饼图圈 (内部环)
+            type: 'pie',
+            zlevel: 3,
+            // 【优化 2】尺寸放大 10%
+            radius: RADIUS_INNER_RING,
+            // 【优化 1】居中
+            center: PIE_CENTER, 
+            legendHoverLink: true, 
+            itemStyle: {
+                normal: {
+                    color: function (params) {
+                        return colorList2[params.dataIndex]
+                    }
+                }
+            },
+            label: {
+                show: true,
+                position: 'outside',
+                formatter: function(params) {
+                    if (params.name === '') {
+                        return '';
+                    }
+                    return params.name;
+                },
+                color: '#FFF',
+                fontSize: 14,
+            },
+            labelLine: {
+                show: true,
+                length: 10,
+                length2: 20,
+                lineStyle: {
+                    color: '#FFF',
+                    width: 1
+                }
+            },
+            data: optionData.map(item => {
+                if (item.name === '') {
+                    return {
+                        ...item,
+                        label: { show: false },
+                        labelLine: { show: false }
+                    };
+                }
+                return item;
+            }), 
+        },
+        {
+            // 最外圆圈 (外部环)
+            type: 'pie',
+            zlevel: 1,
+            // 【优化 2】尺寸放大 10%
+            radius: RADIUS_OUTER_RING,
+            // 【优化 1】居中
+            center: PIE_CENTER, 
+            legendHoverLink: true, 
+            itemStyle: {
+                normal: {
+                    color: function (params) {
+                        return colorList1[params.dataIndex]
+                    }
+                }
+            },
+            label: {
+                show: false
+            },
+            data: optionData, 
+        },
+        {
+            // 细线圈 (装饰用)
+            type: "pie",
+            // 【优化 2】尺寸放大 10%
+            radius: RADIUS_DECORATION_1,
+            // 【优化 1】居中
+            center: PIE_CENTER,
+            hoverAnimation: false,
+            clockWise: false,
+            itemStyle: {
+                normal: {
+                    shadowBlur: 1,
+                    shadowColor: "rgba(15, 79, 150,0.61)",
+                    color: "rgba(23,138,173,1)",
+                },
+            },
+            label: {
+                show: false,
+            },
+            data: [0],
+        },
+        {
+            // 最后一个圈 (装饰用)
+            type: "pie",
+            // 【优化 2】尺寸放大 10%
+            radius: RADIUS_DECORATION_2,
+            // 【优化 1】居中
+            center: PIE_CENTER, 
+            hoverAnimation: false,
+            clockWise: false,
+            color: [
+                "#55c2e200",
+                "rgba(23,138,173,1)",
+                "#ff5a6100",
+                "ff5a6100",
+            ],
+            label: {
+                show: false,
+            },
+            data: valueOnlyData, 
+        },
+    ]
+};
+```
+
+
+
 ## 饼图总数图：PieTotalCharts
 
 ![YY_2025-11-08_19-51-09](assets/YY_2025-11-08_19-51-09.png)
@@ -4972,17 +5267,18 @@ option = {
 
 ```js
 <template>
-  <div :class="className" :style="{ height, width }" ref="chartRef"></div>
+  <div :class="className" :style="{ height, width }" ref="chartRef"/>
 </template>
 
 <script>
 import * as echarts from 'echarts'
-import 'echarts/theme/macarons' // 引入 'macarons' 主题
+import 'echarts/theme/macarons'
+
+import {generateRandomColor} from '@/utils/ruoyi.js'
 
 export default {
-  name: 'PieRoseCharts', // 组件名称设置为 PieRoseCharts
+  name: 'PieTotalRateCharts',
 
-  // 定义 Props
   props: {
     className: {
       type: String,
@@ -4996,7 +5292,39 @@ export default {
       type: String,
       default: '100%'
     },
-    // ECharts 颜色列表
+    chartTitle: {
+      type: String,
+      default: '问题分类'
+    },
+    // 传入的图表数据
+    chartData: {
+      type: Array,
+      default: () => [
+        {name: '一级问题', value: 100},
+        {name: '二级问题', value: 20},
+        {name: '三级问题', value: 30}
+      ]
+    },
+    // 总数
+    total: {
+      type: Number,
+      default: 2000
+    },
+    // 中心总数文本的名称
+    totalName: {
+      type: String,
+      default: '总数'
+    },
+    //比例
+    rateValue: {
+      type: Number,
+      default: 1000
+    },
+    //比例符号
+    rateSymbol: {
+      type: String,
+      default: '‰'
+    },
     defaultColor: {
       type: Array,
       default: () => [
@@ -5007,28 +5335,12 @@ export default {
         '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
         '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9'
       ]
-    },
-    // 核心数据
-    chartData: {
-      type: Array,
-      default: () => [
-        { name: '加工成本', value: 920 },
-        { name: '实验成本', value: 458 },
-        { name: '能源成本', value: 653 },
-        { name: '研发成本', value: 372 }
-      ]
-    },
-    //标题
-    chartTitle: {
-      type: String,
-      default: 'pieRose'
     }
   },
 
   data() {
     return {
-      chart: null, // ECharts 实例
-      pieCenter: ['50%', '50%']
+      chart: null // ECharts 实例
     }
   },
 
@@ -5036,9 +5348,16 @@ export default {
     // 深度侦听 chartData 的变化
     chartData: {
       deep: true,
-      handler(val) {
-        this.setOptions(val)
+      handler(newData) {
+        this.initChart(newData)
       }
+    },
+    // 侦听 total 的变化
+    total() {
+      this.initChart(this.chartData)
+    },
+    totalName() {
+      this.initChart(this.chartData)
     }
   },
 
@@ -5050,151 +5369,137 @@ export default {
   },
 
   beforeDestroy() {
-    // 销毁 ECharts 实例
     if (this.chart) {
       this.chart.dispose()
       this.chart = null
     }
-    // 移除窗口监听事件
     window.removeEventListener('resize', this.handleResize)
   },
 
   methods: {
     /**
-     * 初始化图表实例
+     * 初始化图表
      */
-    initChart() {
-      if (!this.$refs.chartRef) return
-
+    initChart(data) {
+      if (!data || !data.length) {
+        return
+      }
+      //过滤掉值为0的项
+      data = data.filter(item => Number(item.value) > 0)
+      // 销毁已有实例
       if (this.chart) {
         this.chart.dispose()
         this.chart = null
       }
 
-      this.chart = echarts.init(this.$refs.chartRef, 'macarons')
-      this.setOptions(this.chartData)
-    },
+      const totalValue = this.total
+      const rateValue = this.rateValue
+      const rateSymbol = this.rateSymbol
+      const totalNameValue = this.totalName
+      const chartTitleValue = this.chartTitle
+      const defaultColorValue = this.defaultColor
 
-    /**
-     * 设置 ECharts 配置项
-     * @param {Array} data - 从 this.chartData 传入的数据
-     */
-    setOptions(data) {
-      if (!this.chart) return
+      const coloredData = data.map(item => ({
+        ...item,
+        itemStyle: {
+          color: generateRandomColor(defaultColorValue)
+        }
+      }))
+
+      this.chart = echarts.init(this.$refs.chartRef, 'macarons')
 
       const option = {
         title: {
           text: this.chartTitle,
+          top: 20,
+          left: 'center',
           textStyle: {
-            color: '#ccc'
-          },
-          left: 'center'
+            color: '#C5E5F9',
+            fontSize: 18
+          }
         },
-        color: this.defaultColor,
-        tooltip: {
-          show: true,
-          trigger: 'item',
-          backgroundColor: 'transparent', // 完全透明
-          borderWidth: 0,
-          textStyle: {
-            color: '#FFF'
-          },
-          formatter: '{b} <br/> 值: {c} ({d}%)'
-        },
+        color: defaultColorValue,
 
+        // legend (图例)
         legend: {
-          show: true,
-
           orient: 'horizontal',
-
-          type: 'scroll',
-
-          left: '5%',
-          right: '5%',
           bottom: '5%',
-
-          height: 60,
-
+          data: data.map(item => item.name),
           textStyle: {
-            color: '#FFF'
+            color: '#fff',
+            fontSize: 14
           },
-          itemWidth: 10,
-          itemHeight: 10,
-          itemGap: 10, // 如果名称过长，可以尝试减小到 5
-          formatter(name) {
-            return name // 只显示名称
+          icon: 'circle',
+          itemGap: 20
+        },
+
+        // tooltip: 使用 totalValue 计算千分比 (‰)
+        tooltip: {
+          trigger: 'item',
+          formatter: function (params) {
+            // 使用外部捕获的 totalValue
+            const permillage = (params.value / totalValue * rateValue).toFixed(2)
+            return `${params.name}: ${params.value} (${permillage}${rateSymbol})`
           }
         },
 
         series: [
-          // 背景装饰0 实心白圆 zlevel: 4
           {
+            name: chartTitleValue,
             type: 'pie',
-            zlevel: 4,
-            radius: ['0%', '7%'],
-            center: this.pieCenter,
-            silent: true,
-            label: { show: false },
-            data: [{ value: 0, itemStyle: { color: '#FFF' } }]
-          },
-          // 背景装饰1 半透明圆 zlevel: 3
-          {
-            type: 'pie',
-            radius: ['0%', '15%'],
-            center: this.pieCenter,
-            zlevel: 3,
-            silent: true,
-            label: { show: false },
-            data: [{ value: 0, itemStyle: { color: 'rgba(255,255,255, 0.1)' } }]
-          },
-          // 背景装饰3 半透明底盘 zlevel: 1
-          {
-            type: 'pie',
-            zlevel: 1,
-            radius: ['0%', '65%'], // 匹配缩小后的外圈大小
-            center: this.pieCenter,
-            silent: true,
-            label: { show: false },
-            data: [{ value: 0, itemStyle: { color: 'rgba(255,255,255, 0.1)' } }]
-          },
-
-          // 数据源 
-          {
-            type: 'pie',
-            roseType: 'area', // 玫瑰图类型
-            clockwise: false,
-            center: this.pieCenter,
-            zlevel: 2,
-            radius: ['15%', '60%'], // 缩小尺寸
+            center: ['50%', '45%'],
+            radius: ['45%', '55%'],
+            avoidLabelOverlap: false,
             itemStyle: {
-              borderRadius: 4
+              borderRadius: 10
             },
-            data: data, // 使用传入的数据
             label: {
-              normal: {
-                formatter: params => {
-                  const percentage = params.percent.toFixed(1)
-                  return (
-                    '{icon|●}{name|' + params.name + '}\n{value|' +
-                  ' (' + percentage + '%)}' // 显示 值 (百分比%)
-                  )
-                },
-                rich: {
-                  icon: { fontSize: 16, color: 'inherit' },
-                  name: { fontSize: 18, padding: [0, 0, 0, 10], color: '#fff' },
-                  value: { fontSize: 14, padding: [10, 0, 0, 20], color: '#fff' }
-                }
+              show: true,
+              position: 'outside',
+              color: '#fff',
+              fontSize: 14,
+              // 使用自定义函数格式化，计算千分比
+              formatter: function (params) {
+                // 使用外部捕获的 totalValue
+                const permillage = (params.value / totalValue * rateValue).toFixed(2)
+                return `${params.name}\n${params.value} (${permillage}${rateSymbol})`
               }
             },
             labelLine: {
+              show: true,
               length: 10,
               length2: 10,
-              lineStyle: { color: '#fff' }
-            }
+              lineStyle: {
+                color: '#fff'
+              }
+            },
+            data: coloredData
+          },
+          // 饼图中心的文本，显示自定义总数
+          {
+            name: '中心总数',
+            type: 'pie',
+            center: ['50%', '45%'],
+            radius: ['0%', '39%'],
+            hoverAnimation: false,
+            silent: true,
+            itemStyle: {
+              color: 'transparent'
+            },
+            label: {
+              show: true,
+              position: 'center',
+              color: '#fff',
+              fontSize: 18,
+              // 使用外部捕获的 totalNameValue 和 totalValue
+              formatter() {
+                return `${totalNameValue}\n\n${totalValue}`
+              }
+            },
+            data: [{value: 1, name: 'Total Placeholder'}]
           }
         ]
       }
-
       this.chart.setOption(option)
     },
 
@@ -5206,13 +5511,11 @@ export default {
         this.chart.resize()
       }
     }
-
   }
 }
 </script>
 
 <style scoped>
-/* 确保图表容器有正确的布局 */
 .chart {
   overflow: hidden;
 }
@@ -5821,10 +6124,10 @@ export default {
     chartData: {
       type: Array,
       default: () => [
-        { name: '加工成本', value: 920 },
-        { name: '实验成本', value: 458 },
-        { name: '能源成本', value: 653 },
-        { name: '研发成本', value: 372 }
+        {name: '加工成本', value: 920},
+        {name: '实验成本', value: 458},
+        {name: '能源成本', value: 653},
+        {name: '研发成本', value: 372}
       ]
     },
     //标题
@@ -5890,7 +6193,15 @@ export default {
      */
     setOptions(data) {
       if (!this.chart) return
-
+      //计算所有value的总数，并且删除value为0的项
+      let pieData = [];
+      const total = data.reduce((acc, item) => {
+        if (Number(item.value) > 0) {
+          acc += Number(item.value)
+          pieData.push(item)
+        }
+        return acc;
+      }, 0);
       const option = {
         title: {
           text: this.chartTitle,
@@ -5908,22 +6219,19 @@ export default {
           textStyle: {
             color: '#FFF'
           },
-          formatter: '{b} <br/> 值: {c} ({d}%)'
+          formatter: (params) => {
+            return `总计 ${total} <br/>${params.name} <br/> 值: ${params.value} (${params.percent}%)`;
+          }
         },
 
         legend: {
           show: true,
-
           orient: 'horizontal',
-
           type: 'scroll',
-
           left: '5%',
           right: '5%',
           bottom: '5%',
-
           height: 60,
-
           textStyle: {
             color: '#FFF'
           },
@@ -5943,8 +6251,8 @@ export default {
             radius: ['0%', '7%'],
             center: this.pieCenter,
             silent: true,
-            label: { show: false },
-            data: [{ value: 0, itemStyle: { color: '#FFF' } }]
+            label: {show: false},
+            data: [{value: 0, itemStyle: {color: '#FFF'}}]
           },
           // 背景装饰1 半透明圆 zlevel: 3
           {
@@ -5953,8 +6261,8 @@ export default {
             center: this.pieCenter,
             zlevel: 3,
             silent: true,
-            label: { show: false },
-            data: [{ value: 0, itemStyle: { color: 'rgba(255,255,255, 0.1)' } }]
+            label: {show: false},
+            data: [{value: 0, itemStyle: {color: 'rgba(255,255,255, 0.1)'}}]
           },
           // 背景装饰3 半透明底盘 zlevel: 1
           {
@@ -5963,8 +6271,8 @@ export default {
             radius: ['0%', '65%'], // 匹配缩小后的外圈大小
             center: this.pieCenter,
             silent: true,
-            label: { show: false },
-            data: [{ value: 0, itemStyle: { color: 'rgba(255,255,255, 0.1)' } }]
+            label: {show: false},
+            data: [{value: 0, itemStyle: {color: 'rgba(255,255,255, 0.1)'}}]
           },
 
           // 数据源
@@ -5978,27 +6286,27 @@ export default {
             itemStyle: {
               borderRadius: 4
             },
-            data: data, // 使用传入的数据
+            data: pieData, // 使用传入的数据
             label: {
               normal: {
                 formatter: params => {
                   const percentage = params.percent.toFixed(1)
                   return (
                     '{icon|●}{name|' + params.name + '}\n{value|' +
-                  ' (' + percentage + '%)}' // 显示 值 (百分比%)
+                    ' (' + percentage + '%)}' // 显示 值 (百分比%)
                   )
                 },
                 rich: {
-                  icon: { fontSize: 16, color: 'inherit' },
-                  name: { fontSize: 18, padding: [0, 0, 0, 10], color: '#fff' },
-                  value: { fontSize: 14, padding: [10, 0, 0, 20], color: '#fff' }
+                  icon: {fontSize: 16, color: 'inherit'},
+                  name: {fontSize: 18, padding: [0, 0, 0, 10], color: '#fff'},
+                  value: {fontSize: 14, padding: [10, 0, 0, 20], color: '#fff'}
                 }
               }
             },
             labelLine: {
               length: 10,
               length2: 10,
-              lineStyle: { color: '#fff' }
+              lineStyle: {color: '#fff'}
             }
           }
         ]
@@ -7406,6 +7714,314 @@ const option = {
 	],
 };
 ```
+
+### vue2
+
+```js
+<template>
+  <div :class="className" :style="{ height, width }" ref="chartRef"/>
+</template>
+
+<script>
+import * as echarts from 'echarts'
+
+export default {
+  name: 'RadarColorCharts', // 建议为组件命名
+  props: {
+    className: {type: String, default: 'chart'},
+    width: {type: String, default: '100%'},
+    height: {type: String, default: '100%'},
+    chartData: {
+      type: Object,
+      default: () => ({
+        indicators: ['小型车', '中型车', '大型车', '货车', '特种车', '贵宾车'],
+        datas: [
+          {name: 'SOC', values: [3600, 3900, 4300, 4700, 3800, 4200]},
+          {name: '电流', values: [4300, 4700, 3600, 3900, 3800, 4200]},
+          {name: '电压', values: [3200, 3000, 3400, 2000, 3900, 2000]}
+        ]
+      })
+    },
+    defaultColor: {
+      type: Array,
+      default: () => ['#FA9D47', '#0496FF', '#00FBFF', '#4BFFFC', '#816d85', '#FFB74A']
+    },
+    legendPosition: {
+      type: Object,
+      default: () => ({top: 'center', right: 10})
+    },
+    radarCenter: {
+      type: Array,
+      default: () => ['50%', '50%']
+    },
+    radarRadius: {
+      type: Array,
+      default: () => ['0', '65%']
+    },
+    chartName: {type: String, default: '车辆雷达图'},
+  },
+  data() {
+    return {
+      chart: null,
+      resizeObserver: null,
+      // 用于存储 buildSeries 的结果，以便在 tooltip formatter 中访问
+      currentBuildResult: null,
+    }
+  },
+  watch: {
+    chartData: {
+      deep: true,
+      handler() {
+        this.$nextTick(() => {
+          this.initChart()
+        })
+      }
+    }
+  },
+  mounted() {
+    this.$nextTick(() => {
+      this.initChart()
+      this.observeResize()
+    })
+  },
+  beforeDestroy() {
+    if (this.chart) {
+      this.chart.dispose()
+      this.chart = null
+    }
+    if (this.resizeObserver && this.$refs.chartRef) {
+      this.resizeObserver.unobserve(this.$refs.chartRef)
+      this.resizeObserver = null
+    }
+  },
+  methods: {
+    // 检查数组中所有值是否都为0
+    allValuesAreZero(values) {
+      return values.every(v => Number(v) === 0)
+    },
+
+    // 构建 series
+    buildSeries(indicators, datas) {
+      const validIndicatorIndexes = []
+      indicators.forEach((indicator, index) => {
+        const hasValidData = datas.some(series => Number(series.values[index]) !== 0)
+        if (hasValidData) {
+          validIndicatorIndexes.push(index)
+        }
+      })
+
+      if (validIndicatorIndexes.length === 0) {
+        return {series: [], indicators: [], legendData: [], colorArray: []}
+      }
+
+      const filteredIndicators = validIndicatorIndexes.map(index => indicators[index])
+      const filteredDatas = datas.map((series, idx) => ({
+        name: series.name,
+        values: validIndicatorIndexes.map(index => series.values[index]),
+        // 注意：这里访问 props 需要用 this
+        color: this.defaultColor[idx % this.defaultColor.length]
+      }))
+
+      const allValues = filteredDatas.flatMap(d => d.values)
+      const absoluteMax = allValues.length > 0 ? Math.max(...allValues) : 0
+
+      let max
+      if (absoluteMax === 0) {
+        max = 100
+      } else if (absoluteMax < 10) {
+        max = Math.ceil(absoluteMax) + 1
+      } else if (absoluteMax < 100) {
+        max = Math.ceil(absoluteMax / 10) * 10
+      } else if (absoluteMax < 500) {
+        max = Math.ceil(absoluteMax / 50) * 50
+      } else {
+        max = Math.ceil(absoluteMax / 100) * 100
+      }
+
+      // 确保 max 留有缓冲区
+      if (max <= absoluteMax) {
+        max = absoluteMax + Math.max(1, Math.ceil(absoluteMax * 0.1));
+      }
+
+      const indicatorObjects = filteredIndicators.map(name => ({name, max}))
+
+      const seriesData = filteredDatas
+        .filter(item => !this.allValuesAreZero(item.values)) // 使用 this.allValuesAreZero
+        .map(item => ({
+          value: item.values,
+          name: item.name,
+          itemStyle: {
+            color: item.color,
+            opacity: 0.8,
+            borderWidth: 1,
+            borderColor: item.color,
+          },
+          lineStyle: {
+            color: item.color,
+          },
+          areaStyle: {
+            color: item.color,
+            opacity: 0.5,
+          }
+        }))
+
+      const finalDatas = filteredDatas.filter(item => !this.allValuesAreZero(item.values)) // 使用 this.allValuesAreZero
+      const legendData = finalDatas.map(item => item.name)
+      const colorArray = finalDatas.map(item => item.color)
+
+      return {
+        series: seriesData,
+        indicators: indicatorObjects,
+        legendData,
+        colorArray
+      }
+    },
+
+    // 初始化图表
+    initChart() {
+      // 访问 props 和 refs 时使用 this
+      if (!this.chartData || !this.chartData.indicators || !this.chartData.datas || !this.$refs.chartRef) return
+
+      if (this.chart) {
+        this.chart.dispose()
+        this.chart = null
+      }
+
+      this.chart = echarts.init(this.$refs.chartRef)
+
+      const {indicators, datas} = this.chartData
+      const buildResult = this.buildSeries(indicators, datas) // 使用 this.buildSeries
+      this.currentBuildResult = buildResult // 存储结果供 tooltip 使用
+
+      const option = {
+        title: {
+          text: this.chartName, // 使用 this.chartName
+          textStyle: {color: '#00E4FF', fontSize: 16},
+          top: '5%',
+          left: '2%'
+        },
+        color: buildResult.colorArray,
+        tooltip: {
+          trigger: 'item',
+          backgroundColor: 'rgba(3, 9, 24, 1)',
+          textStyle: {
+            color: 'rgba(255, 255, 255, 1)',
+          },
+          formatter: (params) => {
+            const result = this.currentBuildResult // 使用 this.currentBuildResult
+            if (!result) return ''
+
+            const seriesName = params.name
+            const values = params.value
+
+            const marker = `<span style="display:inline-block;margin-right:4px;border-radius:10px;width:10px;height:10px;background-color:${params.color};"></span>`
+
+            let text = `<strong style="font-size: 16px;">${marker}${seriesName}</strong><br/>`
+
+            values.forEach((v, i) => {
+              const indicator = result.indicators[i]
+              if (indicator && v !== 0) {
+                text += `${indicator.name}: ${v}<br/>`
+              }
+            })
+            return text
+          }
+        },
+        legend: {
+          orient: 'vertical',
+          icon: 'rectangle',
+          data: buildResult.legendData,
+          top: this.legendPosition.top, // 使用 this.legendPosition
+          right: this.legendPosition.right,
+          itemWidth: 14,
+          itemHeight: 14,
+          itemGap: 21,
+          textStyle: {
+            fontSize: 14,
+            color: '#fff',
+          },
+        },
+        radar: {
+          radius: this.radarRadius, // 使用 this.radarRadius
+          center: this.radarCenter, // 使用 this.radarCenter
+          axisName: {
+            color: '#fff',
+            fontSize: 14,
+          },
+          splitNumber: 4,
+          indicator: buildResult.indicators,
+          splitArea: {
+            show: true,
+            areaStyle: {
+              color: ['rgba(255, 255, 255, 0.05)', 'rgba(255, 255, 255, 0.1)'],
+            },
+          },
+          axisLine: {
+            lineStyle: {
+              color: '#ffffff',
+              opacity: 0.2,
+            },
+          },
+          splitLine: {
+            lineStyle: {
+              color: '#fff',
+              opacity: 0.4,
+              width: 1,
+              shadowColor: '#0496FF',
+              shadowBlur: 5,
+            },
+          },
+        },
+        series: [
+          {
+            type: 'radar',
+            symbolSize: 8,
+            data: buildResult.series,
+            name: '雷达系列',
+            emphasis: {
+              lineStyle: {
+                width: 4
+              }
+            },
+            label: {
+              show: false
+            }
+          },
+        ],
+      }
+
+      this.chart.setOption(option, true)
+    },
+
+    // 统一的自适应处理函数
+    handleResize() {
+      if (this.chart) {
+        this.chart.resize()
+      }
+    },
+
+    // 观察容器大小变化
+    observeResize() {
+      if (!this.$refs.chartRef) return
+      this.resizeObserver = new ResizeObserver(() => {
+        // 在 Vue 2 中，requestAnimationFrame 仍然是好的实践
+        requestAnimationFrame(this.handleResize)
+      })
+      this.resizeObserver.observe(this.$refs.chartRef)
+    }
+  }
+}
+</script>
+
+<style scoped>
+.chart {
+  width: 100%;
+  height: 100%;
+}
+</style>
+```
+
+
 
 ### vue3
 
