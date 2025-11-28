@@ -12915,7 +12915,7 @@ import * as echarts from 'echarts';
 
 // 经验层自动生成方法
 function expWrap(jobValue, skills) {
-  const expList = [
+  const childrenList = [
     {name: "1年以下", value: 0},
     {name: "经验不限", value: 1},
     {name: "1-3年", value: 2},
@@ -12924,26 +12924,26 @@ function expWrap(jobValue, skills) {
     {name: "5-10年", value: 5}
   ];
 
-  return expList.map(exp => ({
+  return childrenList.map(exp => ({
     name: exp.name,
     value: exp.value,
-    list: skills
+    children: skills
   }));
 }
 
-// 核心数据结构 (listData 保持不变)
-const listData = [
+// 核心数据结构
+const defaultData =
   {
     "name": "企业岗位要求",
     "value": 0,
-    "list": [
+    "children": [
       {
         "name": "10000人以上", "value": 10,
-        "list": [
+        "children": [
           {
             "name": "Java工程师",
             "value": 101,
-            "list": expWrap(101, [{"name": "Java", "value": 10101}, {
+            "children": expWrap(101, [{"name": "Java", "value": 10101}, {
               "name": "Spring Boot",
               "value": 10102
             }, {"name": "MySQL", "value": 10103}, {"name": "Redis", "value": 10104}, {
@@ -12954,7 +12954,7 @@ const listData = [
           {
             "name": "前端工程师",
             "value": 102,
-            "list": expWrap(102, [{"name": "Vue", "value": 10201}, {
+            "children": expWrap(102, [{"name": "Vue", "value": 10201}, {
               "name": "React",
               "value": 10202
             }, {"name": "TypeScript", "value": 10203}, {"name": "Vite", "value": 10204}])
@@ -12962,7 +12962,7 @@ const listData = [
           {
             "name": "后端架构师",
             "value": 103,
-            "list": expWrap(103, [{"name": "微服务架构", "value": 10301}, {
+            "children": expWrap(103, [{"name": "微服务架构", "value": 10301}, {
               "name": "分布式系统",
               "value": 10302
             }, {"name": "高并发设计", "value": 10303}, {"name": "容器化部署", "value": 10304}])
@@ -12970,7 +12970,7 @@ const listData = [
           {
             "name": "测试工程师",
             "value": 104,
-            "list": expWrap(104, [{"name": "自动化测试", "value": 10401}, {
+            "children": expWrap(104, [{"name": "自动化测试", "value": 10401}, {
               "name": "接口测试",
               "value": 10402
             }, {"name": "性能测试", "value": 10403}])
@@ -12978,7 +12978,7 @@ const listData = [
           {
             "name": "产品经理",
             "value": 105,
-            "list": expWrap(105, [{"name": "需求分析", "value": 10501}, {
+            "children": expWrap(105, [{"name": "需求分析", "value": 10501}, {
               "name": "原型设计",
               "value": 10502
             }, {"name": "项目推进", "value": 10503}])
@@ -12986,7 +12986,7 @@ const listData = [
           {
             "name": "数据分析师",
             "value": 106,
-            "list": expWrap(106, [{"name": "Python", "value": 10601}, {
+            "children": expWrap(106, [{"name": "Python", "value": 10601}, {
               "name": "数据清洗",
               "value": 10602
             }, {"name": "可视化报表", "value": 10603}])
@@ -12994,7 +12994,7 @@ const listData = [
           {
             "name": "算法工程师",
             "value": 107,
-            "list": expWrap(107, [{"name": "深度学习", "value": 10701}, {
+            "children": expWrap(107, [{"name": "深度学习", "value": 10701}, {
               "name": "机器学习",
               "value": 10702
             }, {"name": "模型优化", "value": 10703}])
@@ -13003,11 +13003,11 @@ const listData = [
       },
       {
         "name": "100-299人", "value": 20,
-        "list": [
+        "children": [
           {
             "name": "综合行政专员",
             "value": 201,
-            "list": expWrap(201, [{"name": "文档管理", "value": 20101}, {
+            "children": expWrap(201, [{"name": "文档管理", "value": 20101}, {
               "name": "沟通协调",
               "value": 20102
             }, {"name": "采购流程", "value": 20103}])
@@ -13015,7 +13015,7 @@ const listData = [
           {
             "name": "运营专员",
             "value": 202,
-            "list": expWrap(202, [{"name": "数据分析", "value": 20201}, {
+            "children": expWrap(202, [{"name": "数据分析", "value": 20201}, {
               "name": "活动策划",
               "value": 20202
             }, {"name": "内容运营", "value": 20203}])
@@ -13023,7 +13023,7 @@ const listData = [
           {
             "name": "仓库管理员",
             "value": 203,
-            "list": expWrap(203, [{"name": "出入库管理", "value": 20301}, {
+            "children": expWrap(203, [{"name": "出入库管理", "value": 20301}, {
               "name": "物料盘点",
               "value": 20302
             }])
@@ -13031,7 +13031,7 @@ const listData = [
           {
             "name": "客服专员",
             "value": 204,
-            "list": expWrap(204, [{"name": "沟通能力", "value": 20401}, {
+            "children": expWrap(204, [{"name": "沟通能力", "value": 20401}, {
               "name": "问题处理",
               "value": 20402
             }])
@@ -13040,11 +13040,11 @@ const listData = [
       },
       {
         "name": "20-99人", "value": 30,
-        "list": [
+        "children": [
           {
             "name": "电工",
             "value": 301,
-            "list": expWrap(301, [{"name": "线路检修", "value": 30101}, {
+            "children": expWrap(301, [{"name": "线路检修", "value": 30101}, {
               "name": "设备维护",
               "value": 30102
             }, {"name": "应急处理", "value": 30103}])
@@ -13052,7 +13052,7 @@ const listData = [
           {
             "name": "维修工",
             "value": 302,
-            "list": expWrap(302, [{"name": "设备维修", "value": 30201}, {
+            "children": expWrap(302, [{"name": "设备维修", "value": 30201}, {
               "name": "工具使用",
               "value": 30202
             }, {"name": "机械基础", "value": 30203}])
@@ -13060,7 +13060,7 @@ const listData = [
           {
             "name": "安全员",
             "value": 303,
-            "list": expWrap(303, [{"name": "隐患排查", "value": 30301}, {
+            "children": expWrap(303, [{"name": "隐患排查", "value": 30301}, {
               "name": "安全巡检",
               "value": 30302
             }, {"name": "应急预案", "value": 30303}])
@@ -13068,7 +13068,7 @@ const listData = [
           {
             "name": "保洁员",
             "value": 304,
-            "list": expWrap(304, [{"name": "垃圾分类", "value": 30401}, {
+            "children": expWrap(304, [{"name": "垃圾分类", "value": 30401}, {
               "name": "区域维护",
               "value": 30402
             }])
@@ -13076,21 +13076,21 @@ const listData = [
           {
             "name": "质检员",
             "value": 305,
-            "list": expWrap(305, [{"name": "质量抽检", "value": 30501}, {
+            "children": expWrap(305, [{"name": "质量抽检", "value": 30501}, {
               "name": "异常记录",
               "value": 30502
             }])
           },
-          {"name": "仓储助理", "value": 306, "list": expWrap(306, [{"name": "仓库整理", "value": 30601}])}
+          {"name": "仓储助理", "value": 306, "children": expWrap(306, [{"name": "仓库整理", "value": 30601}])}
         ]
       },
       {
         "name": "500-999人", "value": 40,
-        "list": [
+        "children": [
           {
             "name": "绿化养护工",
             "value": 401,
-            "list": expWrap(401, [{"name": "植物修剪", "value": 40101}, {
+            "children": expWrap(401, [{"name": "植物修剪", "value": 40101}, {
               "name": "施肥",
               "value": 40102
             }, {"name": "病害识别", "value": 40103}])
@@ -13098,7 +13098,7 @@ const listData = [
           {
             "name": "设备管理员",
             "value": 402,
-            "list": expWrap(402, [{"name": "设备台账", "value": 40201}, {
+            "children": expWrap(402, [{"name": "设备台账", "value": 40201}, {
               "name": "例行保养",
               "value": 40202
             }])
@@ -13107,11 +13107,11 @@ const listData = [
       },
       {
         "name": "1000-9999人", "value": 50,
-        "list": [
+        "children": [
           {
             "name": "园林巡检员",
             "value": 501,
-            "list": expWrap(501, [{"name": "植物病害识别", "value": 50101}, {
+            "children": expWrap(501, [{"name": "植物病害识别", "value": 50101}, {
               "name": "巡查记录",
               "value": 50102
             }, {"name": "简单处理", "value": 50103}])
@@ -13119,7 +13119,7 @@ const listData = [
           {
             "name": "消防巡检员",
             "value": 502,
-            "list": expWrap(502, [{"name": "消防设备检查", "value": 50201}, {
+            "children": expWrap(502, [{"name": "消防设备检查", "value": 50201}, {
               "name": "隐患发现",
               "value": 50202
             }])
@@ -13128,11 +13128,11 @@ const listData = [
       },
       {
         "name": "300-499人", "value": 60,
-        "list": [
+        "children": [
           {
             "name": "环卫工人",
             "value": 601,
-            "list": expWrap(601, [{"name": "垃圾清运", "value": 60101}, {
+            "children": expWrap(601, [{"name": "垃圾清运", "value": 60101}, {
               "name": "区域巡查",
               "value": 60102
             }])
@@ -13140,7 +13140,7 @@ const listData = [
           {
             "name": "司机",
             "value": 602,
-            "list": expWrap(602, [{"name": "驾驶技能", "value": 60201}, {
+            "children": expWrap(602, [{"name": "驾驶技能", "value": 60201}, {
               "name": "车辆保养",
               "value": 60202
             }])
@@ -13149,25 +13149,26 @@ const listData = [
       },
       {
         "name": "20人以下", "value": 70,
-        "list": [
+        "children": [
           {
             "name": "店员",
             "value": 701,
-            "list": expWrap(701, [{"name": "收银", "value": 70101}, {"name": "商品整理", "value": 70102}])
+            "children": expWrap(701, [{"name": "收银", "value": 70101}, {"name": "商品整理", "value": 70102}])
           },
           {
             "name": "外卖员",
             "value": 702,
-            "list": expWrap(702, [{"name": "路线规划", "value": 70201}, {
+            "children": expWrap(702, [{"name": "路线规划", "value": 70201}, {
               "name": "快速配送",
-              "value": 70202
+              "value": 70202,
+              "children": []
             }])
-          }
+          },
         ]
       }
     ]
   }
-];
+;
 
 export default {
   name: 'RelationCharts',
@@ -13186,8 +13187,8 @@ export default {
       default: '100%'
     },
     chartData: {
-      type: Array,
-      default: () => listData
+      type: Object,
+      default: () => defaultData
     },
     chartName: {
       type: String,
@@ -13208,10 +13209,6 @@ export default {
         {c1: "#4a3ac6", c2: "#604BFF"}
       ]
     },
-    backgroundColor: {
-      type: String,
-      default: '#000'
-    }
   },
 
   data() {
@@ -13254,16 +13251,18 @@ export default {
     /**
      * 生成唯一ID
      */
-    generateIds(arr, parentId = '', parentNode = null) {
-      arr.forEach(item => {
+    generateIds(arr, parentId = '', parentNode = null, index = 0) {
+      arr.forEach((item, idx) => {
         if (item.name === null) return;
-        // 确保 ID 唯一且用于 ECharts 的 name
-        item.id = parentId ? `${parentId}_${item.value}` : String(item.value);
-        item.parentId = parentNode ? parentNode.id : null; // **新增：记录父节点 ID**
-        item.level = parentNode ? parentNode.level + 1 : 0; // **新增：记录层级**
+        item.parentId = parentNode ? parentNode.id : null;
+        item.level = parentNode ? parentNode.level + 1 : 0;
 
-        if (item.list && item.list.length) {
-          this.generateIds(item.list, item.id, item);
+        // 使用更可靠的唯一ID生成方式
+        const uniqueKey = `${parentId || 'root'}_${item.level}_${item.name}`;
+        item.id = uniqueKey;
+        console.log(uniqueKey);
+        if (item.children && item.children.length) {
+          this.generateIds(item.children, item.id, item, idx);
         }
       });
     },
@@ -13272,7 +13271,7 @@ export default {
      * 递归处理节点数据，生成图谱节点
      * **修改点：在 item 中存储 color 对象、parentId、level**
      */
-    handle2(arr, idx, color, category, list, legend) {
+    handle2(arr, idx, color, category, children, legend) {
       arr.forEach((item, index) => {
         if (item.name === null) return;
 
@@ -13334,7 +13333,7 @@ export default {
         }
 
         let itemStyle;
-        if (item.list && item.list.length) {
+        if (item.children && item.children.length) {
           // 非叶子节点
           itemStyle = {borderColor: currentColor.c2, color: bgcolor};
         } else {
@@ -13369,12 +13368,12 @@ export default {
         Object.assign(item, obj);
 
         if (idx === 0) item.root = true;
-        if (!item.list || !item.list.length) item.isEnd = true;
+        if (!item.children || !item.children.length) item.isEnd = true;
 
-        list.push(item);
+        children.push(item);
 
-        if (item.list && item.list.length) {
-          this.handle2(item.list, idx + 1, currentColor, category, list, legend);
+        if (item.children && item.children.length) {
+          this.handle2(item.children, idx + 1, currentColor, category, children, legend);
         }
       });
     },
@@ -13384,10 +13383,10 @@ export default {
      */
     handle3(arr, links) {
       arr.forEach((item) => {
-        if (item.list) {
+        if (item.children) {
           const parentLineColor = item.lineColor || this.colors[0].c2;
 
-          item.list.forEach((item2) => {
+          item.children.forEach((item2) => {
             const lineColor = parentLineColor;
 
             links.push({
@@ -13410,7 +13409,7 @@ export default {
             });
           });
 
-          this.handle3(item.list, links);
+          this.handle3(item.children, links);
         }
       });
     },
@@ -13525,7 +13524,7 @@ export default {
      * 初始化图表
      */
     initChart() {
-      if (!this.chartData || this.chartData.length === 0) {
+      if (!this.chartData || Object.keys(this.chartData).length === 0) { // 检查对象是否为空
         if (this.chart) {
           this.chart.dispose();
           this.chart = null;
@@ -13547,29 +13546,30 @@ export default {
         this.chart.on('mouseout', this.handleMouseOut);
       }
 
-      // 深拷贝一次
-      const processedData = JSON.parse(JSON.stringify(this.chartData));
+      // 将对象格式的 chartData 包装成数组，并深拷贝
+      const chartDataArray = [this.chartData];
+      const processedData = JSON.parse(JSON.stringify(chartDataArray));
 
       // 调用生成 ID 时，同时生成父子关系信息
       this.generateIds(processedData);
 
-      const list = [];
+      const children = [];
       const links = [];
       const legend = [];
 
-      this.handle2(processedData, 0, null, null, list, legend);
+      this.handle2(processedData, 0, null, null, children, legend);
       this.handle3(processedData, links);
 
       // 存储处理后的节点和连线数据到组件状态
-      this.allNodes = list;
+      this.allNodes = children;
       this.allLinks = links;
 
-      const categories = this.chartData[0].list.map(item => ({name: item.name}));
+      // 从数组的第一个（也是唯一的）元素中获取 categories
+      const categories = this.chartData.children.map(item => ({name: item.name}));
       const legendColor = this.colors.map(item => item.c2);
 
       const vm = this;
       const option = {
-        backgroundColor: this.backgroundColor,
         title: {
           show: true,
           text: this.chartName,
@@ -13638,7 +13638,7 @@ export default {
           draggable: true,
           roam: true,
           symbol: "circle",
-          data: list,
+          data: children,
           links: links,
           categories: categories,
           // 禁用 ECharts 默认的焦点邻近，使用自定义的 mouseover 事件处理
