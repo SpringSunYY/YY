@@ -10587,7 +10587,13 @@ watch(
 
 
 
-## 自定义tooltip词云图
+## 自定义tooltip词云图-KeywordTooltipCharts
+
+所需依赖
+
+```js
+"highcharts": "^10.3.3",
+```
 
 ![YY_2025-11-29_17-38-41](assets/YY_2025-11-29_17-38-41.png)
 
@@ -10726,54 +10732,13 @@ initializeChart('container', wordCloudData);
 <script>
 // 引入 Highcharts 核心库
 import Highcharts from 'highcharts';
-
-// 必须引入词云图模块
-// highcharts 模块是 UMD 格式，在 webpack 中需要使用 require
-const wordcloudModule = require('highcharts/modules/wordcloud');
-const exportingModule = require('highcharts/modules/exporting');
-const fullscreenModule = require('highcharts/modules/full-screen');
-
-// 尝试多种可能的导出格式
-const getModuleFunction = (module) => {
-  if (typeof module === 'function') {
-    return module;
-  }
-  if (module && typeof module.default === 'function') {
-    return module.default;
-  }
-  if (module && module.__esModule && module.default) {
-    return module.default;
-  }
-  if (module && typeof module === 'object') {
-    for (const key in module) {
-      if (typeof module[key] === 'function') {
-        return module[key];
-      }
-    }
-  }
-  return module;
-};
-
-const WordCloud = getModuleFunction(wordcloudModule);
-const Exporting = getModuleFunction(exportingModule);
-const FullScreen = getModuleFunction(fullscreenModule);
-
-// 应该确保在使用前正确初始化模块
-if (typeof WordCloud === 'function') {
-  WordCloud(Highcharts);
-} else {
-  console.error('无法初始化 WordCloud 模块，模块类型:', typeof WordCloud, WordCloud);
-}
-
-if (typeof Exporting === 'function') {
-  Exporting(Highcharts);
-}
-
-if (typeof FullScreen === 'function') {
-  FullScreen(Highcharts);
-}
-
 import {generateRandomColor} from "@/utils/ruoyi";
+
+// Highcharts 10.x 版本的模块导入方式
+// 使用 require 导入模块（Highcharts 10.x 兼容性更好）
+require('highcharts/modules/wordcloud')(Highcharts);
+require('highcharts/modules/exporting')(Highcharts);
+require('highcharts/modules/full-screen')(Highcharts);
 
 // 原始数据
 const RAW_DATA = [
@@ -10840,6 +10805,10 @@ export default {
         '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9'
       ]
     },
+    backgroundColor: {
+      type: String,
+      default: 'transparent'
+    },
   },
 
   // 数据状态
@@ -10895,7 +10864,7 @@ export default {
     },
 
     /**
-     * @description 重新初始化图表 (对应 ECharts 的 restore)
+     * @description 重新初始化图表
      */
     resetChart() {
       // 销毁旧图表并重新初始化，确保所有状态回到最初
@@ -10909,6 +10878,7 @@ export default {
       this.processedData = this.processData(data);
       this.initChart();
     },
+
     /**
      * @description 初始化 Highcharts 图表
      */
@@ -10930,14 +10900,16 @@ export default {
       const chartContainer = this.$refs.chartRef;
 
       const options = {
+        backgroundColor: this.backgroundColor,
         title: {text: this.chartName},
         credits: {enabled: false},
         tooltip: {
           enabled: true,
+          borderWidth: 0,
           backgroundColor: 'rgba(0,0,0,0.2)',
           style: {
             color: '#fff',
-            fontSize: '12px'
+            fontSize: '16px'
           },
           formatter: function () {
             const point = this.point;
@@ -12320,6 +12292,647 @@ watch(() => props.defaultIndexName, () => {
 }
 </style>
 ```
+
+### vue2
+
+```vue
+<template>
+  <div class="chart-container">
+    <div :class="className" :style="{ height, width }" ref="chartRef"/>
+    <div class="back" @click="goBack" v-show="showBack">返回</div>
+  </div>
+</template>
+
+<script>
+import * as echarts from 'echarts';
+import {getGeoJson} from '@/api/file.js';
+
+export default {
+  name: 'MapCharts',
+  props: {
+    className: {type: String, default: 'chart'},
+    width: {type: String, default: '100%'},
+    height: {type: String, default: '100%'},
+    initCountry: {type: String, default: 'china'},
+    initName: {type: String, default: '中华人民共和国'},
+    chartName: {type: String, default: '用户分布'},
+    chartData: {
+      type: Array,
+      default: () => [
+        {name: "用户人数", value: [{location: "广东省", value: 1000}]},
+        {name: "用户登录数", value: [{location: "广东省", value: 1000}]},
+      ]
+    },
+    defaultIndexName: {
+      type: String,
+      default: "用户人数"
+    },
+    returnLevel: {
+      type: Array,
+      default: () => ['province', 'china']
+    },
+  },
+  data() {
+    return {
+      chart: null,
+      chartTitle: this.chartName,
+      geoJsonFeatures: [],
+      showBack: false,
+      parentInfo: [],
+      isChartReady: false,
+      resizeTimer: null,
+      isRendering: false,
+    };
+  },
+  computed: {
+    defaultDataIndex() {
+      const index = this.chartData.findIndex(item => item.name === this.defaultIndexName);
+      return index >= 0 ? index : 0;
+    },
+    defaultDataItem() {
+      return this.chartData[this.defaultDataIndex] || this.chartData[0] || {name: '', value: []};
+    },
+    dataSummary() {
+      const summary = {};
+      if (!this.chartData) return summary;
+      this.chartData.forEach(dataItem => {
+        summary[dataItem.name] = dataItem.value.reduce((sum, item) => Number(sum) + (Number(item.value) || 0), 0);
+      });
+      return summary;
+    }
+  },
+  watch: {
+    initName(newVal, oldVal) {
+      if (newVal !== oldVal) {
+        this.initializeParentInfo();
+        this.loadMapData();
+      }
+    },
+    chartData: {
+      handler() {
+        if (this.chart && this.isChartReady) {
+          this.renderMap();
+        }
+      },
+      deep: true
+    },
+    defaultIndexName() {
+      if (this.chart && this.isChartReady) {
+        this.renderMap();
+      }
+    }
+  },
+  mounted() {
+    this.$nextTick(async () => {
+      await this.initChart();
+      setTimeout(() => {
+        this.bindResizeEvent();
+      }, 1000);
+    });
+  },
+  beforeDestroy() {
+    if (this.resizeTimer) {
+      clearTimeout(this.resizeTimer);
+      this.resizeTimer = null;
+    }
+
+    if (this.chart) {
+      try {
+        if (!this.chart.isDisposed()) {
+          this.chart.dispose();
+        }
+      } catch (error) {
+        console.warn('图表销毁时出错:', error);
+      }
+      this.chart = null;
+    }
+
+    window.removeEventListener('resize', this.handleResize);
+    this.isChartReady = false;
+    this.isRendering = false;
+  },
+  methods: {
+    formateLevel(currentLevel) {
+      switch (currentLevel) {
+        case this.initCountry:
+          return 'province';
+        case 'province':
+          return 'city';
+        case 'city':
+          return 'county';
+        case 1:
+          return 'province';
+        case 2:
+          return 'city';
+        case 3:
+          return 'county';
+        default:
+          console.warn('未知层级:', currentLevel);
+          return '';
+      }
+    },
+    initializeParentInfo() {
+      if (this.initName === '中华人民共和国') {
+        this.parentInfo = [{name: '中华人民共和国', level: 'china'}];
+      } else {
+        this.parentInfo = [{name: this.initName, level: 'province'}];
+      }
+    },
+    getDataValuesByLocation(locationName) {
+      const result = {};
+
+      this.chartData.forEach(dataItem => {
+        const locationData = dataItem.value.find(item =>
+          item.location === locationName ||
+          item.location.includes(locationName) ||
+          locationName.includes(item.location)
+        );
+        result[dataItem.name] = locationData ? locationData.value : 0;
+      });
+
+      return result;
+    },
+    getMapData() {
+      if (this.geoJsonFeatures.length === 0) {
+        return {mapData: [], pointData: []};
+      }
+
+      const tmp = this.geoJsonFeatures.map(feature => {
+        const {name, fullname, adcode, level, center} = feature.properties || {};
+        const dataValues = this.getDataValuesByLocation(fullname || name);
+        const mainValue = dataValues[this.defaultDataItem.name] || 0;
+
+        return {
+          name,
+          fullname,
+          cityCode: adcode,
+          level,
+          center,
+          value: mainValue,
+          ...dataValues
+        };
+      }).sort((a, b) => a.value - b.value);
+
+      const mapData = tmp.map(item => ({
+        name: item.name,
+        value: item.value,
+        level: item.level,
+        cityCode: item.cityCode,
+        fullname: item.fullname,
+        ...Object.keys(this.dataSummary).reduce((acc, key) => {
+          acc[key] = item[key] || 0;
+          return acc;
+        }, {})
+      }));
+
+      const pointData = tmp.map(item => ({
+        name: item.name,
+        value: [
+          item.center?.[0] || (116 + Math.random()),
+          item.center?.[1] || (30 + Math.random()),
+          item.value
+        ],
+        cityCode: item.cityCode,
+        fullname: item.fullname,
+        ...Object.keys(this.dataSummary).reduce((acc, key) => {
+          acc[key] = item[key] || 0;
+          return acc;
+        }, {})
+      }));
+
+      return {mapData, pointData};
+    },
+    generateTooltipFormatter() {
+      return (params) => {
+        if (!params?.data) return '';
+        const d = params.data;
+
+        let content = `<div style="text-align:left">
+          ${d.fullname || d.name}<br/>`;
+
+        this.chartData.forEach(dataItem => {
+          const value = d[dataItem.name] || 0;
+          content += `${dataItem.name}：${value} <br/>`;
+        });
+
+        content += `<hr style="border:0;border-top:1px solid #666;margin:4px 0"/>`;
+
+        Object.entries(this.dataSummary).forEach(([name, total]) => {
+          content += `总${name}：${total} <br/>`;
+        });
+
+        content += `</div>`;
+        return content;
+      };
+    },
+    generateGraphicElements() {
+      const summaryEntries = Object.entries(this.dataSummary);
+      if (summaryEntries.length === 0) return [];
+
+      const lineHeight = 20;
+      const padding = 10;
+      const totalHeight = summaryEntries.length * lineHeight + padding * 2;
+      const textContent = summaryEntries.map(([name, total]) => `总${name}：${total}`).join('\n');
+
+      return [
+        {
+          type: 'group',
+          right: 20,
+          bottom: 30,
+          children: [
+            {
+              type: 'rect',
+              shape: {width: 200, height: totalHeight, r: 8},
+              style: {
+                fill: 'rgba(0,0,0,0.01)',
+                stroke: '#00cfff',
+                lineWidth: 1,
+                shadowBlur: 8,
+                shadowColor: 'rgba(0,0,0,0.25)'
+              }
+            },
+            {
+              type: 'text',
+              style: {
+                text: textContent,
+                x: padding,
+                y: padding,
+                fill: '#fff',
+                font: '14px Microsoft YaHei',
+                lineHeight: lineHeight
+              }
+            }
+          ]
+        }
+      ];
+    },
+    renderMap() {
+      if (!this.chart || this.isRendering) return;
+
+      this.isRendering = true;
+      const mapName = 'map';
+
+      if (this.geoJsonFeatures.length > 0) {
+        echarts.registerMap(mapName, {features: this.geoJsonFeatures});
+      }
+
+      const {mapData, pointData} = this.getMapData();
+      const values = mapData.map(d => d.value);
+      const min = values.length ? Math.min(...values) : 0;
+      const max = values.length ? Math.max(...values) : 10000;
+
+      let visualMapMin = min;
+      let visualMapMax = max;
+      if (min === max) {
+        visualMapMin = max === 0 ? 0 : max * 0.8;
+        visualMapMax = max === 0 ? 1000 : max;
+      }
+
+      const yCategories = mapData.map(d => d.name);
+      const barSeriesData = mapData.map(d => ({
+        name: d.name,
+        value: d.value,
+        cityCode: d.cityCode,
+        level: d.level,
+        fullname: d.fullname,
+        ...Object.keys(this.dataSummary).reduce((acc, key) => {
+          acc[key] = d[key] || 0;
+          return acc;
+        }, {})
+      }));
+
+      // 根据当前层级动态调整缩放参数
+      const currentInfo = this.parentInfo[this.parentInfo.length - 1];
+      const isChinaMap = currentInfo && currentInfo.level === 'china';
+      const layoutSize = isChinaMap ? '150%' : '90%';
+      const geoZoom = isChinaMap ? 1.25 : 1.0;
+      const layoutCenter = isChinaMap ? ['0%', '60%'] : ['42%', '50%'];
+      const option = {
+        animation: false,
+        title: [{
+          left: 'center',
+          top: 10,
+          text: this.chartTitle,
+          textStyle: {color: 'rgb(179, 239, 255)', fontSize: 16}
+        }],
+        tooltip: {
+          trigger: 'item',
+          formatter: this.generateTooltipFormatter(),
+          backgroundColor: 'rgba(60, 60, 60, 0.7)',
+          borderColor: '#333',
+          borderWidth: 1,
+          textStyle: {color: '#fff'}
+        },
+        graphic: this.generateGraphicElements(),
+        geo: {
+          map: mapName,
+          roam: true,
+          zoom: geoZoom,
+          layoutCenter: layoutCenter,
+          layoutSize: layoutSize,
+          label: {
+            normal: {show: true, color: 'rgb(249, 249, 249)'},
+            emphasis: {show: true, color: '#f75a00'}
+          },
+          itemStyle: {
+            normal: {
+              areaColor: '#24CFF4',
+              borderColor: '#53D9FF',
+              borderWidth: 1.3,
+              shadowBlur: 15,
+              shadowColor: 'rgb(58,115,192)',
+              shadowOffsetX: 0,
+              shadowOffsetY: 6
+            },
+            emphasis: {areaColor: '#8dd7fc', borderWidth: 1.6, shadowBlur: 25}
+          }
+        },
+        ...(barSeriesData.length > 0 ? {
+          grid: {
+            right: '1%',
+            top: '10%',
+            bottom: '20%',
+            width: '12%',
+            containLabel: false,
+            show: false,
+            z: 2
+          },
+          xAxis: {
+            type: 'value',
+            position: 'top',
+            axisLine: {lineStyle: {color: '#455B77'}},
+            axisTick: {show: false},
+            axisLabel: {
+              interval: 'auto',
+              rotate: 45,
+              textStyle: {color: '#ffffff'},
+              fontSize: 10
+            },
+            splitNumber: 5,
+            minInterval: 'auto',
+            splitLine: {show: false},
+            show: true
+          },
+          yAxis: {
+            type: 'category',
+            axisLine: {lineStyle: {color: '#ffffff'}},
+            axisTick: {show: false},
+            axisLabel: {textStyle: {color: '#c0e6f9'}},
+            data: yCategories,
+            inverse: false,
+            show: true
+          }
+        } : {}),
+        visualMap: {
+          min: visualMapMin,
+          max: visualMapMax,
+          left: '3%',
+          bottom: '5%',
+          calculable: true,
+          seriesIndex: [0],
+          inRange: {color: ['#24CFF4', '#2E98CA', '#1E62AC']},
+          textStyle: {color: '#24CFF4'},
+        },
+        series: [
+          {
+            name: this.defaultDataItem.name,
+            type: 'map',
+            geoIndex: 0,
+            map: mapName,
+            roam: true,
+            label: {show: false},
+            data: mapData,
+            itemStyle: {
+              normal: {
+                areaColor: '#24CFF4',
+                borderColor: '#53D9FF'
+              }
+            }
+          },
+          {
+            name: '散点',
+            type: 'effectScatter',
+            coordinateSystem: 'geo',
+            geoIndex: 0,
+            rippleEffect: {brushType: 'fill'},
+            itemStyle: {
+              color: '#F4E925',
+              shadowBlur: 6,
+              shadowColor: '#333',
+              opacity: 0.8
+            },
+            symbolSize: (val) => {
+              const v = val?.[2] || 0;
+              const minSize = 3, maxSize = 10;
+              if (visualMapMax === visualMapMin) return (minSize + maxSize) / 2;
+              return minSize + (v - visualMapMin) / (visualMapMax - visualMapMin) * (maxSize - minSize);
+            },
+            showEffectOn: 'render',
+            data: pointData
+          },
+          ...(barSeriesData.length > 0 ? [{
+            name: '柱状',
+            type: 'bar',
+            data: barSeriesData,
+            barGap: '-100%',
+            barCategoryGap: '30%',
+            barWidth: 6,
+            itemStyle: {
+              normal: {
+                color: '#11AAFE',
+                barBorderRadius: [0, 6, 6, 0],
+                opacity: 0.8
+              }
+            },
+            z: 3
+          }] : []),
+        ]
+      };
+
+      try {
+        this.chart.clear();
+        this.chart.setOption(option);
+        this.chart.hideLoading();
+        this.isChartReady = true;
+      } catch (error) {
+        console.error('图表渲染失败:', error);
+        this.isChartReady = false;
+      } finally {
+        this.isRendering = false;
+      }
+    },
+    async loadMapData() {
+      const currentInfo = this.parentInfo[this.parentInfo.length - 1];
+      if (!currentInfo?.level) return;
+
+      try {
+        this.isChartReady = false;
+        this.chart?.showLoading();
+
+        let requestLevel = currentInfo.level;
+        if (currentInfo.level !== 'china' && !requestLevel.startsWith(this.initCountry)) {
+          requestLevel = `${this.initCountry}/${currentInfo.level}`;
+        }
+
+        const res = await getGeoJson(requestLevel, currentInfo.name);
+        if (!res?.geoJson) {
+          console.warn('无地图数据，回退上一级');
+          this.parentInfo.pop();
+          return;
+        }
+
+        const data = JSON.parse(res.geoJson);
+        this.geoJsonFeatures = data.features || [];
+        this.chartTitle = `${currentInfo.fullname || currentInfo.name}${this.chartName}`;
+
+        await this.$nextTick();
+        this.renderMap();
+
+        if (this.geoJsonFeatures.length === 0 && this.parentInfo.length > 1) {
+          console.warn('无下级数据，自动回退');
+          this.goBack();
+        }
+
+        if (this.returnLevel.find(level => level === currentInfo?.level)) {
+          this.$emit('getData', currentInfo);
+        }
+      } catch (err) {
+        console.error('地图数据加载失败:', err);
+        this.geoJsonFeatures = [];
+        this.renderMap();
+      } finally {
+        this.chart?.hideLoading();
+      }
+    },
+    handleDrillDown(data) {
+      if (!data?.name) {
+        console.warn('无效数据，无法下钻');
+        return;
+      }
+
+      const currentLevelInfo = this.parentInfo[this.parentInfo.length - 1];
+      const nextLevel = this.formateLevel(currentLevelInfo.level);
+      if (!nextLevel) {
+        console.warn('已达最低层级，无法下钻');
+        return;
+      }
+
+      this.parentInfo.push({
+        name: data.fullname || data.name,
+        level: nextLevel
+      });
+
+      this.loadMapData();
+      this.showBack = this.parentInfo.length > 1;
+    },
+    goBack() {
+      if (this.parentInfo.length <= 1) {
+        console.log('已达最高层级');
+        return;
+      }
+
+      this.parentInfo.pop();
+      if (this.parentInfo.length === 0) {
+        this.initializeParentInfo();
+      }
+
+      this.loadMapData();
+      this.showBack = this.parentInfo.length > 1;
+    },
+    handleResize() {
+      if (this.resizeTimer) {
+        clearTimeout(this.resizeTimer);
+      }
+
+      if (!this.chart || this.isRendering) {
+        console.log('图表不可用或正在渲染，跳过 resize');
+        return;
+      }
+
+      this.resizeTimer = setTimeout(() => {
+        try {
+          if (this.chart && !this.chart.isDisposed()) {
+            if (!this.isChartReady) {
+              console.log('图表未就绪，执行重新渲染');
+              this.renderMap();
+            } else {
+              this.chart.resize({
+                width: 'auto',
+                height: 'auto',
+                silent: true
+              });
+            }
+          }
+        } catch (error) {
+          this.isChartReady = false;
+          setTimeout(() => {
+            if (this.chart && !this.chart.isDisposed()) {
+              this.renderMap();
+            }
+          }, 300);
+        }
+      }, 300);
+    },
+    async initChart() {
+      if (!this.$refs.chartRef) return;
+
+      try {
+        if (this.chart) {
+          this.chart.dispose();
+        }
+
+        this.chart = echarts.init(this.$refs.chartRef);
+
+        this.initializeParentInfo();
+        await this.loadMapData();
+
+        this.chart.off('click');
+        this.chart.on('click', (params) => {
+          if ((params.seriesType === 'map' || params.seriesType === 'bar') && params.data) {
+            this.handleDrillDown(params.data);
+          }
+        });
+      } catch (error) {
+        console.error('图表初始化失败:', error);
+      }
+    },
+    bindResizeEvent() {
+      window.removeEventListener('resize', this.handleResize);
+      window.addEventListener('resize', this.handleResize, {passive: true});
+    }
+  }
+};
+</script>
+
+<style scoped>
+.chart-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.back {
+  position: absolute;
+  left: 25px;
+  top: 25px;
+  color: rgb(179, 239, 255);
+  font-size: 16px;
+  cursor: pointer;
+  z-index: 100;
+  border: 1px solid #53D9FF;
+  padding: 5px 10px;
+  border-radius: 5px;
+  background-color: rgba(36, 207, 244, 0.2);
+  transition: background-color 0.2s ease;
+}
+
+.back:hover {
+  background-color: rgba(36, 207, 244, 0.4);
+}
+</style>
+```
+
+
 
 ## 中国地图：Map
 
@@ -14357,7 +14970,7 @@ const option = {
 </template>
 
 <script>
-import * as echarts from 'echarts';
+import echarts from 'echarts';
 
 const defaultChartData = [
   {xAxis: 2, yAxis: 22500.00, name: '新车', tooltip: '平均工资：22500.00，最高工资：30000.00，最低工资：15000.00'},
@@ -14484,7 +15097,7 @@ export default {
     height: {type: String, default: '100%'},
     chartName: {type: String, default: '技能职位与平均工资散点图'},
     chartData: {type: Array, default: () => defaultChartData},
-    symbolScale: {type: Number, default: 10}
+    symbolScale: {type: Number, default: 2}
   },
 
   data() {
@@ -14493,7 +15106,7 @@ export default {
       rawDataCache: [],
       globalAvgX: 0, // 全局平均职位总数，用于总览模式下的筛选阈值
       // 放大阈值：dataZoom 范围小于 90% 时，认为是“已放大”
-      zoomThreshold: 90
+      zoomThreshold: 100
     };
   },
 
@@ -14640,7 +15253,7 @@ export default {
       // --- 3. ECharts Option 配置 ---
       const self = this;
       const option = {
-        title: {text: this.chartName, left: 'center'},
+        title: {text: this.chartName, left: 'center', textStyle: {color: '#fff'}},
         dataZoom: [
           // 确保 dataZoom 存在，否则 event.batch[0] 会报错
           {type: 'inside', xAxisIndex: 0, filterMode: 'none', start: 0, end: 100},
@@ -14648,8 +15261,9 @@ export default {
         ],
         visualMap: {
           min: minSalary, max: maxSalary, dimension: 4,
-          orient: 'vertical', right: 10, top: 'center',
+          orient: 'vertical', right: 2, top: 'center',
           text: ['最大值', '最小值'], calculable: true,
+          textStyle: {color: '#fff'},
           inRange: {color: ['#A3E4D7', '#117A65']}
         },
         tooltip: {
@@ -14659,7 +15273,7 @@ export default {
               const name = params.value[2];
               const originalX = params.value[5];
               const tooltipStr = params.value[3];
-              const formattedTooltipStr = tooltipStr.replace(/，/g, '<br/>');
+              const formattedTooltipStr = tooltipStr.replace(/\n/g, '<br/>');
               return `${name}: ${originalX.toFixed(0)}<br/>${formattedTooltipStr}`;
             }
             if (params.seriesName === '所有技能平均工资') {
@@ -14671,15 +15285,16 @@ export default {
 
         xAxis: {
           type: 'value', name: '职位总数 (Value)', nameLocation: 'middle', nameGap: 30,
-          axisLabel: {formatter: '{value}'}, splitLine: {show: true},
+          axisLabel: {formatter: '{value}', color: '#ffffff'}, splitLine: {show: true},
           min: globalMinX,
           max: globalMaxX
         },
         yAxis: {
-          type: 'value', name: '平均工资 (元)', nameLocation: 'middle', nameGap: 50,
-          axisLabel: {formatter: '{value} 元'}, splitLine: {show: true}
+          type: 'value', name: '平均', nameLocation: 'middle', nameGap: 30,
+          color: 'black',
+          axisLabel: {formatter: '{value} 元', color: '#ffffff'}, splitLine: {show: true}
         },
-        grid: {left: '10%', right: '15%', bottom: '10%', containLabel: true},
+        grid: {left: '2%', right: '12%', bottom: '10%', containLabel: true},
 
         series: [
           {
@@ -14712,7 +15327,7 @@ export default {
               position: 'right',
               fontSize: 10,
               fontWeight: 'bold',
-              color: '#333',
+              color: '#ffffff',
               bleed: false, // 初始不溢出
               minMargin: 3,
               overflow: 'break',
@@ -14943,6 +15558,803 @@ option = {
         },
     ],
 };
+```
+
+
+
+# 背景边框
+
+## 星星背景-StarsBorderBg
+
+![YY_2025-11-30_18-20-29](assets/YY_2025-11-30_18-20-29.png)
+
+### 相关图片
+
+![stars-border-bg](assets/stars-border-bg.png)
+
+### vue2
+
+```vue
+<template>
+  <div class="screen-border" :style="{ width, height }">
+    <div class="stars-container">
+      <div
+        v-for="star in stars"
+        :key="star.id"
+        class="star"
+        :style="{
+          left: star.x + '%',
+          top: star.y + '%',
+          animationDelay: star.delay + 's',
+          animationDuration: star.duration + 's'
+        }"
+      ></div>
+    </div>
+
+    <div class="main-border">
+      <div class="corner-decoration top-left">
+        <div class="corner-lines vertical">
+          <div class="line"></div>
+          <div class="line"></div>
+          <div class="line"></div>
+        </div>
+      </div>
+      <div class="corner-decoration top-right">
+        <div class="corner-lines vertical">
+          <div class="line"></div>
+          <div class="line"></div>
+          <div class="line"></div>
+        </div>
+      </div>
+      <div class="corner-decoration bottom-left">
+        <div class="corner-lines horizontal">
+          <div class="line"></div>
+          <div class="line"></div>
+          <div class="line"></div>
+        </div>
+      </div>
+      <div class="corner-decoration bottom-right">
+        <div class="corner-lines horizontal">
+          <div class="line"></div>
+          <div class="line"></div>
+          <div class="line"></div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="title" class="title-container">
+      <div class="title-background">
+        <span class="title-text">{{ title }}</span>
+      </div>
+    </div>
+
+    <div class="content-area">
+      <slot></slot>
+    </div>
+
+    <div class="waves">
+      <svg viewBox="0 0 1200 120" preserveAspectRatio="none">
+        <path d="M0,60 C300,120 900,0 1200,60 L1200,120 L0,120 Z" class="wave-path wave1"></path>
+        <path d="M0,80 C400,20 800,100 1200,40 L1200,120 L0,120 Z" class="wave-path wave2"></path>
+        <path d="M0,100 C200,40 1000,80 1200,20 L1200,120 L0,120 Z" class="wave-path wave3"></path>
+      </svg>
+    </div>
+  </div>
+</template>
+
+<script>
+export default {
+  name: 'StarsBorderBg',
+  // 定义组件属性
+  props: {
+    width: {
+      type: String,
+      default: '100vw'
+    },
+    height: {
+      type: String,
+      default: '100vh'
+    },
+    title: {
+      type: String,
+      default: ''
+    }
+  },
+  // 组件数据
+  data() {
+    return {
+      stars: [] // 存储星星数据
+    }
+  },
+  // 组件方法
+  methods: {
+    generateStars() {
+      const starCount = 500
+      for (let i = 0; i < starCount; i++) {
+        this.stars.push({
+          id: i,
+          x: Math.random() * 100,
+          y: Math.random() * 100,
+          delay: Math.random() * 3,
+          duration: 2 + Math.random() * 4
+        })
+      }
+    }
+  },
+  // 生命周期钩子
+  mounted() {
+    // 在组件挂载后调用生成星星的方法
+    this.generateStars()
+  }
+}
+</script>
+
+<style scoped>
+.screen-border {
+  position: relative;
+  background-image: url("../../assets/images/stars-border-bg.png");
+  background-repeat: repeat;
+  background-size: contain;
+  overflow: hidden;
+}
+
+/* 星空背景 */
+.stars-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.star {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  background: #00ffff;
+  border-radius: 50%;
+  animation: twinkle infinite ease-in-out;
+  box-shadow: 0 0 4px #00ffff;
+}
+
+@keyframes twinkle {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+/* 主边框 */
+.main-border {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.main-border::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border: 2px solid #00ffff;
+  clip-path: polygon(
+    30px 0%,
+    calc(50% - 80px) 0%,
+    calc(50% - 60px) 20px,
+    calc(50% + 60px) 20px,
+    calc(50% + 80px) 0%,
+    calc(100% - 30px) 0%,
+    100% 30px,
+    100% calc(100% - 30px),
+    calc(100% - 30px) 100%,
+    30px 100%,
+    0% calc(100% - 30px),
+    0% 30px
+  );
+  box-shadow: 0 0 20px rgba(0, 255, 255, 0.5),
+  inset 0 0 20px rgba(0, 255, 255, 0.1);
+  animation: borderGlow 2s ease-in-out infinite alternate;
+}
+
+@keyframes borderGlow {
+  0% {
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.5),
+    inset 0 0 20px rgba(0, 255, 255, 0.1);
+  }
+  100% {
+    box-shadow: 0 0 30px rgba(0, 255, 255, 0.8),
+    inset 0 0 30px rgba(0, 255, 255, 0.2);
+  }
+}
+
+/* 角落装饰 */
+.corner-decoration {
+  position: absolute;
+  width: 60px;
+  height: 60px;
+}
+
+.top-left {
+  top: 0;
+  left: 0;
+}
+
+.top-right {
+  top: 0;
+  right: 0;
+}
+
+.bottom-left {
+  bottom: 0;
+  left: 0;
+}
+
+.bottom-right {
+  bottom: 0;
+  right: 0;
+}
+
+.corner-lines {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.corner-lines.vertical {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 8px;
+}
+
+.corner-lines.vertical .line {
+  width: 20px;
+  height: 3px;
+}
+
+.corner-lines.horizontal {
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  padding: 8px 12px;
+  align-items: flex-end;
+}
+
+.corner-lines.horizontal .line {
+  width: 3px;
+  height: 20px;
+}
+
+.corner-lines .line {
+  background: #00ffff;
+  box-shadow: 0 0 8px rgba(0, 255, 255, 0.6);
+  animation: cornerBlink 1.5s ease-in-out infinite;
+}
+
+@keyframes cornerBlink {
+  0%, 70% {
+    opacity: 0.4;
+  }
+  35% {
+    opacity: 1;
+  }
+}
+
+/* 标题区域 - 无边框 */
+.title-container {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  padding-top: 5px; /* 调整标题与顶部主边框的距离 */
+}
+
+.title-text {
+  color: #ffffff;
+  font-size: 36px;
+  font-weight: 700;
+  text-shadow: 0 0 10px rgba(0, 255, 255, 0.8),
+  0 0 20px rgba(0, 255, 255, 0.4),
+  2px 2px 4px rgba(0, 0, 0, 0.8);
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  position: relative;
+  z-index: 2;
+  white-space: nowrap; /* 防止标题文字换行 */
+}
+
+/* 标题背景发光动画 */
+@keyframes titleGlow {
+  0% {
+    box-shadow: 0 0 25px rgba(0, 255, 255, 0.6),
+    inset 0 0 20px rgba(0, 255, 255, 0.15),
+    0 5px 15px rgba(0, 0, 0, 0.3);
+  }
+  100% {
+    box-shadow: 0 0 35px rgba(0, 255, 255, 0.9),
+    inset 0 0 30px rgba(0, 255, 255, 0.25),
+    0 8px 20px rgba(0, 0, 0, 0.4);
+  }
+}
+
+/* 内容区域 */
+.content-area {
+  position: relative;
+  padding: 5px;
+  height: 100%;
+  box-sizing: border-box;
+  z-index: 5;
+}
+
+/* 底部波浪 */
+.waves {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 120px;
+  pointer-events: none;
+}
+
+.waves svg {
+  width: 100%;
+  height: 100%;
+}
+
+.wave-path {
+  fill: rgba(0, 255, 255, 0.1);
+  animation: waveMove 6s ease-in-out infinite;
+}
+
+.wave1 {
+  animation-delay: 0s;
+}
+
+.wave2 {
+  animation-delay: -2s;
+  fill: rgba(0, 255, 255, 0.05);
+}
+
+.wave3 {
+  animation-delay: -4s;
+  fill: rgba(0, 255, 255, 0.03);
+}
+
+@keyframes waveMove {
+  0%, 100% {
+    d: path("M0,60 C300,120 900,0 1200,60 L1200,120 L0,120 Z");
+  }
+  50% {
+    d: path("M0,80 C300,20 800,100 1200,40 L1200,120 L0,120 Z");
+  }
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .content-area {
+    padding: 60px 30px 40px;
+  }
+
+  .title-text {
+    font-size: 16px;
+  }
+
+  .corner-decoration {
+    width: 40px;
+    height: 40px;
+  }
+
+  .corner-lines.vertical .line {
+    width: 15px;
+    height: 2px;
+  }
+
+  .corner-lines.horizontal .line {
+    width: 2px;
+    height: 15px;
+  }
+}
+</style>
+```
+
+### vue3
+
+```vue
+<template>
+  <div class="screen-border" :style="{ width, height }">
+    <div class="stars-container">
+      <div
+          v-for="star in stars"
+          :key="star.id"
+          class="star"
+          :style="{
+          left: star.x + '%',
+          top: star.y + '%',
+          animationDelay: star.delay + 's',
+          animationDuration: star.duration + 's'
+        }"
+      ></div>
+    </div>
+
+    <div class="main-border">
+      <div class="corner-decoration top-left">
+        <div class="corner-lines vertical">
+          <div class="line"></div>
+          <div class="line"></div>
+          <div class="line"></div>
+        </div>
+      </div>
+      <div class="corner-decoration top-right">
+        <div class="corner-lines vertical">
+          <div class="line"></div>
+          <div class="line"></div>
+          <div class="line"></div>
+        </div>
+      </div>
+      <div class="corner-decoration bottom-left">
+        <div class="corner-lines horizontal">
+          <div class="line"></div>
+          <div class="line"></div>
+          <div class="line"></div>
+        </div>
+      </div>
+      <div class="corner-decoration bottom-right">
+        <div class="corner-lines horizontal">
+          <div class="line"></div>
+          <div class="line"></div>
+          <div class="line"></div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="title" class="title-container">
+      <div class="title-background">
+        <span class="title-text">{{ title }}</span>
+      </div>
+    </div>
+
+    <div class="content-area">
+      <slot></slot>
+    </div>
+
+    <div class="waves">
+      <svg viewBox="0 0 1200 120" preserveAspectRatio="none">
+        <path d="M0,60 C300,120 900,0 1200,60 L1200,120 L0,120 Z" class="wave-path wave1"></path>
+        <path d="M0,80 C400,20 800,100 1200,40 L1200,120 L0,120 Z" class="wave-path wave2"></path>
+        <path d="M0,100 C200,40 1000,80 1200,20 L1200,120 L0,120 Z" class="wave-path wave3"></path>
+      </svg>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import {ref, onMounted} from 'vue'
+
+const props = defineProps({
+  width: {
+    type: String,
+    default: '100vw'
+  },
+  height: {
+    type: String,
+    default: '100vh'
+  },
+  title: {
+    type: String,
+    default: '图片模块数据分析'
+  }
+})
+
+const stars = ref([])
+
+const generateStars = () => {
+  const starCount = 500
+  for (let i = 0; i < starCount; i++) {
+    stars.value.push({
+      id: i,
+      x: Math.random() * 100,
+      y: Math.random() * 100,
+      delay: Math.random() * 3,
+      duration: 2 + Math.random() * 4
+    })
+  }
+}
+
+onMounted(() => {
+  generateStars()
+})
+</script>
+
+<style scoped>
+.screen-border {
+  position: relative;
+  background-image: url("/src/assets/images/picture-statistics-bg.png");
+  background-repeat: repeat;
+  background-size: contain;
+  overflow: hidden;
+}
+
+/* 星空背景 */
+.stars-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.star {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  background: #00ffff;
+  border-radius: 50%;
+  animation: twinkle infinite ease-in-out;
+  box-shadow: 0 0 4px #00ffff;
+}
+
+@keyframes twinkle {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+/* 主边框 */
+.main-border {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.main-border::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border: 2px solid #00ffff;
+  clip-path: polygon(
+      30px 0%,
+      calc(50% - 80px) 0%,
+      calc(50% - 60px) 20px,
+      calc(50% + 60px) 20px,
+      calc(50% + 80px) 0%,
+      calc(100% - 30px) 0%,
+      100% 30px,
+      100% calc(100% - 30px),
+      calc(100% - 30px) 100%,
+      30px 100%,
+      0% calc(100% - 30px),
+      0% 30px
+  );
+  box-shadow: 0 0 20px rgba(0, 255, 255, 0.5),
+  inset 0 0 20px rgba(0, 255, 255, 0.1);
+  animation: borderGlow 2s ease-in-out infinite alternate;
+}
+
+@keyframes borderGlow {
+  0% {
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.5),
+    inset 0 0 20px rgba(0, 255, 255, 0.1);
+  }
+  100% {
+    box-shadow: 0 0 30px rgba(0, 255, 255, 0.8),
+    inset 0 0 30px rgba(0, 255, 255, 0.2);
+  }
+}
+
+/* 角落装饰 */
+.corner-decoration {
+  position: absolute;
+  width: 60px;
+  height: 60px;
+}
+
+.top-left {
+  top: 0;
+  left: 0;
+}
+
+.top-right {
+  top: 0;
+  right: 0;
+}
+
+.bottom-left {
+  bottom: 0;
+  left: 0;
+}
+
+.bottom-right {
+  bottom: 0;
+  right: 0;
+}
+
+.corner-lines {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.corner-lines.vertical {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 8px;
+}
+
+.corner-lines.vertical .line {
+  width: 20px;
+  height: 3px;
+}
+
+.corner-lines.horizontal {
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  padding: 8px 12px;
+  align-items: flex-end;
+}
+
+.corner-lines.horizontal .line {
+  width: 3px;
+  height: 20px;
+}
+
+.corner-lines .line {
+  background: #00ffff;
+  box-shadow: 0 0 8px rgba(0, 255, 255, 0.6);
+  animation: cornerBlink 1.5s ease-in-out infinite;
+}
+
+@keyframes cornerBlink {
+  0%, 70% {
+    opacity: 0.4;
+  }
+  35% {
+    opacity: 1;
+  }
+}
+
+/* 标题区域 - 无边框 */
+.title-container {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  padding-top: 5px; /* 调整标题与顶部主边框的距离 */
+}
+
+.title-text {
+  color: #ffffff;
+  font-size: 36px;
+  font-weight: 700;
+  text-shadow: 0 0 10px rgba(0, 255, 255, 0.8),
+  0 0 20px rgba(0, 255, 255, 0.4),
+  2px 2px 4px rgba(0, 0, 0, 0.8);
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  position: relative;
+  z-index: 2;
+  white-space: nowrap; /* 防止标题文字换行 */
+}
+
+/* 标题背景发光动画 */
+@keyframes titleGlow {
+  0% {
+    box-shadow: 0 0 25px rgba(0, 255, 255, 0.6),
+    inset 0 0 20px rgba(0, 255, 255, 0.15),
+    0 5px 15px rgba(0, 0, 0, 0.3);
+  }
+  100% {
+    box-shadow: 0 0 35px rgba(0, 255, 255, 0.9),
+    inset 0 0 30px rgba(0, 255, 255, 0.25),
+    0 8px 20px rgba(0, 0, 0, 0.4);
+  }
+}
+
+/* 内容区域 */
+.content-area {
+  position: relative;
+  padding: 5px;
+  height: 100%;
+  box-sizing: border-box;
+  z-index: 5;
+}
+
+/* 底部波浪 */
+.waves {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 120px;
+  pointer-events: none;
+}
+
+.waves svg {
+  width: 100%;
+  height: 100%;
+}
+
+.wave-path {
+  fill: rgba(0, 255, 255, 0.1);
+  animation: waveMove 6s ease-in-out infinite;
+}
+
+.wave1 {
+  animation-delay: 0s;
+}
+
+.wave2 {
+  animation-delay: -2s;
+  fill: rgba(0, 255, 255, 0.05);
+}
+
+.wave3 {
+  animation-delay: -4s;
+  fill: rgba(0, 255, 255, 0.03);
+}
+
+@keyframes waveMove {
+  0%, 100% {
+    d: path("M0,60 C300,120 900,0 1200,60 L1200,120 L0,120 Z");
+  }
+  50% {
+    d: path("M0,80 C300,20 800,100 1200,40 L1200,120 L0,120 Z");
+  }
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .content-area {
+    padding: 60px 30px 40px;
+  }
+
+  .title-text {
+    font-size: 16px;
+  }
+
+  .corner-decoration {
+    width: 40px;
+    height: 40px;
+  }
+
+  .corner-lines.vertical .line {
+    width: 15px;
+    height: 2px;
+  }
+
+  .corner-lines.horizontal .line {
+    width: 2px;
+    height: 15px;
+  }
+}
+</style>
 ```
 
 
