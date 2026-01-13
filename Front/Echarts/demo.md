@@ -2,6 +2,12 @@
 
 [TOC]
 
+# 介绍
+
+> 推荐Echarts5.2.0以上
+>
+> 对应代码放在dome文件夹
+
 # 柱形图
 
 ## 柱形饼图同层图
@@ -4241,6 +4247,25 @@ watch(() => props.chartData, () => initChart(), {deep: true})
 
 
 
+## 柱形排行点击图：BarRankingCharts
+
+> 可以点击排行返回事件
+>
+> ```js
+>         {
+>             "name": "沈河区",
+>             "value": 3143,
+>              "tooltipText": "沈阳市的政治、经济、文化中心", 
+>              "moreInfo": "沈阳的political"  //可以传递更多内容
+>         },
+> ```
+>
+> 
+
+![YY_2026-01-06_16-04-48](assets/YY_2026-01-06_16-04-48.png)
+
+
+
 ## 柱形排行图-BarRankingCharts
 
 ![image-20250927191659964](assets/image-20250927191659964.png)
@@ -6204,6 +6229,28 @@ watch(
 
 
 # 饼图
+
+## 圆饼图：PieRoundCharts
+
+> 重影背景
+>
+> 自动计算总数和平均值
+
+![YY_2026-01-13_17-30-30](assets/YY_2026-01-13_17-30-30.png)
+
+## 饼图重影图：PieGhostingCharts
+
+> 重影背景
+>
+> 自动计算总数和平均值
+
+![YY_2026-01-13_16-16-50](assets/YY_2026-01-13_16-16-50.png)
+
+## 饼柱排行图：PieBarRankingCharts
+
+> 点击饼图内容柱形排行
+
+![YY_2026-01-06_17-31-10](assets/YY_2026-01-06_17-31-10.png)
 
 ## 饼柱同层图
 
@@ -20851,6 +20898,10 @@ export default {
 
 # 散点图
 
+## 颜色渐变散点图：ScatterGradientCharts
+
+![YY_2026-01-13_18-20-45](assets/YY_2026-01-13_18-20-45.png)
+
 ## 涟漪散点图：ScatterRippleCharts
 
 ![YY_2026-01-05_19-46-17](assets/YY_2026-01-05_19-46-17.png)
@@ -21023,16 +21074,18 @@ export default {
     defaultColor: {
       type: Array,
       default: () => [
-        '#2ca1ff', '#0adbfa', '#febe13', '#65e5dd',
-        '#7b2cff', '#fd5151', '#f071ff', '#85f67a',
-        '#0baefd', '#fdcd0b', '#0bfdab', '#ff5353',
-        '#ff72cb', '#8488ff', '#A5DEE4', '#81C7D4', '#24936E',
-        '#5B8FF9', '#5AD8A6', '#5D7092', '#F6BD16', '#E86A92',
-        '#7262FD', '#269A29', '#8E36BE', '#41A7E2', '#7747A3',
-        '#FF7F50', '#FFDAB9', '#ADFF2F', '#00CED1', '#9370DB',
-        '#3CB371', '#FF69B4', '#FFB6C1', '#DA70D6', '#98FB98',
-        '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
-        '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9'
+        '#002FA7', '#1F6AE1', '#3F8EFC', '#88D9FF', // 克莱因蓝系（理性 / 科技 / 主视觉）
+        '#0B3C5D', '#1C5D99', '#3A7CA5', '#7FB7D9', // 深海蓝系（秩序 / 稳定 / 后台）
+        '#5AC8FA', '#6BC4FF', '#88D9FF', '#BEE9FF', // 天空蓝系（清爽 / 数据可视化）
+        '#5B7CFA', '#6A6FF2', '#8A7CF6', '#A184F3', // 紫蓝过渡系（理性 + 情绪）
+        '#5F4B8B', '#7A6C9D', '#9C89B8', '#C1B2D6', // 高级紫系（创造 / 想象）
+        '#8C1D18', '#B22222', '#C80000', '#EB5757', // 中国红系（权威 / 关键状态）
+        '#9E2A2B', '#B23A48', '#C8553D', '#E07A5F', // 胭脂红系（人文 / 温度）
+        '#D4A017', '#EB9C10', '#F2C94C', '#FFE08A', // 金黄系（价值 / 成就）
+        '#2E7D32', '#43A047', '#66BB6A', '#A5D6A7', // 东方绿系（生命 / 成长）
+        '#1F7A7A', '#2FA4A9', '#6ADBCF', '#BFEFEF', // 青绿系（治愈 / 正反馈）
+        '#4ED6E6', '#6FE7F0', '#9FF3F5', '#D6FBFB', // 薄荷青系（轻盈 / 呼吸感）
+        '#F48FB1', '#F58AD9', '#E38CEB', '#FFD1E8'  // 樱粉系（情绪点缀）
       ]
     },
     minBubbleSize: {
@@ -21162,14 +21215,8 @@ export default {
           textStyle: {color: '#fff', fontSize: 20}
         },
         dataZoom: [
-          {
-            type: 'inside',
-            xAxisIndex: [0],
-            yAxisIndex: [0],
-            filterMode: 'none',
-            zoomOnMouseWheel: true,
-            moveOnMouseMove: true
-          }
+          { type: 'inside', xAxisIndex: 0, minSpan: 60 },
+          { type: 'inside', yAxisIndex: 0, minSpan: 60 }
         ],
         tooltip: {
           show: true,
@@ -23566,5 +23613,24 @@ export function generateRandomColor(colorList) {
         return `rgb(${r},${g},${b},0.9)`
     }
 };
+```
+
+## 颜色
+
+```js
+ [
+        '#002FA7', '#1F6AE1', '#3F8EFC', '#88D9FF', // 克莱因蓝系（理性 / 科技 / 主视觉）
+        '#0B3C5D', '#1C5D99', '#3A7CA5', '#7FB7D9', // 深海蓝系（秩序 / 稳定 / 后台）
+        '#5AC8FA', '#6BC4FF', '#88D9FF', '#BEE9FF', // 天空蓝系（清爽 / 数据可视化）
+        '#5B7CFA', '#6A6FF2', '#8A7CF6', '#A184F3', // 紫蓝过渡系（理性 + 情绪）
+        '#5F4B8B', '#7A6C9D', '#9C89B8', '#C1B2D6', // 高级紫系（创造 / 想象）
+        '#8C1D18', '#B22222', '#C80000', '#EB5757', // 中国红系（权威 / 关键状态）
+        '#9E2A2B', '#B23A48', '#C8553D', '#E07A5F', // 胭脂红系（人文 / 温度）
+        '#D4A017', '#EB9C10', '#F2C94C', '#FFE08A', // 金黄系（价值 / 成就）
+        '#2E7D32', '#43A047', '#66BB6A', '#A5D6A7', // 东方绿系（生命 / 成长）
+        '#1F7A7A', '#2FA4A9', '#6ADBCF', '#BFEFEF', // 青绿系（治愈 / 正反馈）
+        '#4ED6E6', '#6FE7F0', '#9FF3F5', '#D6FBFB', // 薄荷青系（轻盈 / 呼吸感）
+        '#F48FB1', '#F58AD9', '#E38CEB', '#FFD1E8'  // 樱粉系（情绪点缀）
+      ]
 ```
 
