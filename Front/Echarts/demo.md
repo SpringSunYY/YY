@@ -6230,6 +6230,18 @@ watch(
 
 # 饼图
 
+## 空心玫瑰饼图：PieRoseHollowCharts
+
+![img](assets/{7C9B2358-221E-420F-9FD2-714A9ABABFBF})
+
+
+
+## PieRoseLineCharts：线性玫瑰饼图
+
+> 自定义是否显示总数和平均值
+
+![YY_2026-01-13_20-35-10](assets/YY_2026-01-13_20-35-10.png)
+
 ## 圆饼图：PieRoundCharts
 
 > 重影背景
