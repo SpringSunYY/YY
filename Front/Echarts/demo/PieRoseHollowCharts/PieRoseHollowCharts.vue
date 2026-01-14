@@ -209,6 +209,7 @@ export default {
     handleResize() {
       if (this.chart) {
         this.chart.resize();
+        this.setOption(this.chartData)
       }
     }
   }

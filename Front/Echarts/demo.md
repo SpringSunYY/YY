@@ -10,7 +10,11 @@
 
 # 柱形图
 
-## 柱形饼图同层图
+## 柱形趋势图：BarTrendCharts
+
+![YY_2026-01-14_17-35-41](assets/YY_2026-01-14_17-35-41.png)
+
+## 柱形饼图同层图：PieBarCharts
 
 ![YY_2025-12-10_19-24-25](assets/YY_2025-12-10_19-24-25.png)
 
@@ -20909,6 +20913,10 @@ export default {
 ```
 
 # 散点图
+
+## 颜色渐变缩放散点图：ScatterGradientZoomCharts
+
+![YY_2026-01-14_15-42-05](assets/YY_2026-01-14_15-42-05.png)
 
 ## 颜色渐变散点图：ScatterGradientCharts
 

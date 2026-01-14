@@ -48,17 +48,18 @@ export default {
     defaultColor: {
       type: Array,
       default: () => [
-        '#88D9FF', '#0092FF', '#81EDD2', '#B0FA93',
-        '#63F2FF', '#9999FE', '#115FEA', '#10EBE3',
-        '#10A9EB', '#EB9C10', '#2E10EB', '#9B10EB',
-        '#F2E110', '#C1232B', '#27727B', '#5AD8A6',
-        '#5D7092', '#F6BD16', '#E86A92', '#7262FD',
-        '#269A29', '#8E36BE', '#41A7E2', '#7747A3',
-        '#FF7F50', '#FFDAB9', '#ADFF2F', '#00CED1',
-        '#9370DB', '#3CB371', '#FF69B4', '#FFB6C1',
-        '#DA70D6', '#98FB98', '#FF6B6B', '#4ECDC4',
-        '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD',
-        '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9'
+        '#002FA7', '#1F6AE1', '#3F8EFC', '#88D9FF', // 克莱因蓝系（理性 / 科技 / 主视觉）
+        '#0B3C5D', '#1C5D99', '#3A7CA5', '#7FB7D9', // 深海蓝系（秩序 / 稳定 / 后台）
+        '#5AC8FA', '#6BC4FF', '#88D9FF', '#BEE9FF', // 天空蓝系（清爽 / 数据可视化）
+        '#5B7CFA', '#6A6FF2', '#8A7CF6', '#A184F3', // 紫蓝过渡系（理性 + 情绪）
+        '#5F4B8B', '#7A6C9D', '#9C89B8', '#C1B2D6', // 高级紫系（创造 / 想象）
+        '#8C1D18', '#B22222', '#C80000', '#EB5757', // 中国红系（权威 / 关键状态）
+        '#9E2A2B', '#B23A48', '#C8553D', '#E07A5F', // 胭脂红系（人文 / 温度）
+        '#D4A017', '#EB9C10', '#F2C94C', '#FFE08A', // 金黄系（价值 / 成就）
+        '#2E7D32', '#43A047', '#66BB6A', '#A5D6A7', // 东方绿系（生命 / 成长）
+        '#1F7A7A', '#2FA4A9', '#6ADBCF', '#BFEFEF', // 青绿系（治愈 / 正反馈）
+        '#4ED6E6', '#6FE7F0', '#9FF3F5', '#D6FBFB', // 薄荷青系（轻盈 / 呼吸感）
+        '#F48FB1', '#F58AD9', '#E38CEB', '#FFD1E8'  // 樱粉系（情绪点缀）
       ]
     }
   },
@@ -137,7 +138,7 @@ export default {
         }, gapData);
       });
 
-      const chartCenter = ['50%', '50%'];
+      const chartCenter = ['50%', '45%'];
 
       const option = {
         backgroundColor: this.backgroundColor,
@@ -145,7 +146,7 @@ export default {
           text: this.chartTitle,
           subtext: total.toString(),
           left: "center",
-          top: "40%",
+          top: "35%",
           itemGap: 15,
           textStyle: {color: "#f5f5f6", fontSize: 18, fontWeight: "bold"},
           subtextStyle: {color: "#f5f5f6", fontSize: 40, fontWeight: "bold"},
@@ -245,11 +246,12 @@ export default {
         ],
       };
 
-      this.chart.setOption(option,true);
+      this.chart.setOption(option, true);
     },
     handleResize() {
       if (this.chart) {
         this.chart.resize();
+        this.setOption(this.chartData)
       }
     }
   }
