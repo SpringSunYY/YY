@@ -27,13 +27,10 @@ export default {
       type: Array,
       default: () => [
         '#002FA7', '#1F6AE1', '#3F8EFC', '#88D9FF', // 克莱因蓝系（理性 / 科技 / 主视觉）
-        '#0B3C5D', '#1C5D99', '#3A7CA5', '#7FB7D9', // 深海蓝系（秩序 / 稳定 / 后台）
-        '#5AC8FA', '#6BC4FF', '#88D9FF', '#BEE9FF', // 天空蓝系（清爽 / 数据可视化）
         '#5B7CFA', '#6A6FF2', '#8A7CF6', '#A184F3', // 紫蓝过渡系（理性 + 情绪）
         '#5F4B8B', '#7A6C9D', '#9C89B8', '#C1B2D6', // 高级紫系（创造 / 想象）
         '#8C1D18', '#B22222', '#C80000', '#EB5757', // 中国红系（权威 / 关键状态）
         '#9E2A2B', '#B23A48', '#C8553D', '#E07A5F', // 胭脂红系（人文 / 温度）
-        '#D4A017', '#EB9C10', '#F2C94C', '#FFE08A', // 金黄系（价值 / 成就）
         '#2E7D32', '#43A047', '#66BB6A', '#A5D6A7', // 东方绿系（生命 / 成长）
         '#1F7A7A', '#2FA4A9', '#6ADBCF', '#BFEFEF', // 青绿系（治愈 / 正反馈）
         '#4ED6E6', '#6FE7F0', '#9FF3F5', '#D6FBFB', // 薄荷青系（轻盈 / 呼吸感）
@@ -43,9 +40,9 @@ export default {
     // 最小比例
     minSize: {type: Number, default: 0.1},
     // 最大比例
-    maxSize: {type: Number, default: 0.2},
+    maxSize: {type: Number, default: 0.3},
     // 是否显示额外统计信息
-    showExtraInfo: {type: Boolean, default: false}
+    showExtraInfo: {type: Boolean, default: true}
   },
   data() {
     return {
@@ -124,7 +121,7 @@ export default {
           name: item.name,
           value: [x, y],
           symbolSize: currentSize,
-          tooltipText: item.tooltipText || item.name,
+          tooltipText: item.tooltipText,
           rawValue: item.value,
           max: item.max, // 透传最大值
           min: item.min, // 透传最小值
@@ -163,13 +160,13 @@ export default {
         title: {
           text: this.chartTitle,
           left: 'center',
-          top: 20,
+          top: '1%',
           textStyle: {color: '#fff', fontSize: 20}
         },
         dataZoom: [
           // X 轴内置缩放
-          {type: 'inside', xAxisIndex: 0, minSpan: 60},
-          {type: 'inside', yAxisIndex: 0, minSpan: 60},
+          {type: 'inside', xAxisIndex: 0, minSpan: 30},
+          {type: 'inside', yAxisIndex: 0, minSpan: 30},
         ],
         tooltip: {
           show: true,
@@ -189,11 +186,11 @@ export default {
                         <b style="color:#00FF7F">平均: ${this.avgVal}</b>
                       </div>`;
             }
-            res += `<b>${d.name}: ${d.rawValue}</b> <small>(${percentage}%)</small>`;
+            res += `<b>${d.name}: ${d.rawValue}</b> <small>(${percentage}%)</small><br/>`;
             // 显式最大值/最小值
-            if (d.max !== undefined || d.min !== undefined) {
-              res += `<br/><span style="font-size:12px; color:#ccc;">范围: ${d.min ?? '-'} ~ ${d.max ?? '-'}</span>`;
-            }
+            if (params.data.max !== undefined) res += `<b>最大:</b> ${params.data.max}<br/>`;
+            if (params.data.min !== undefined) res += `<b>最小:</b> ${params.data.min}<br/>`;
+            if (params.data.avg !== undefined) res += `<b>平均:</b> ${params.data.avg.toFixed(2)}<br/>`;
             if (d.tooltipText) {
               res += `<br/><span style="color:#00FFFF; font-size:12px;">${d.tooltipText}</span>`;
             }

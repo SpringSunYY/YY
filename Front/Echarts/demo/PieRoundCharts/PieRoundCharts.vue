@@ -167,10 +167,13 @@ export default {
               总计：${total} | 平均：${avg}<br/>
               <hr style="border-color:rgba(255,255,255,0.2)"/>
               <span style="display:inline-block;margin-right:5px;border-radius:10px;width:10px;height:10px;background-color:${params.color};"></span>
-              ${params.name}：${params.value} (${ratio})`;
-
+              ${params.name}：${params.value} (${ratio})<br/>`;
+            // 显式最大值/最小值
+            if (dataItem.avg !== undefined) str += `<b>平均:</b> ${params.data.avg.toFixed(2)}<br/>`;
+            if (dataItem.max !== undefined) str += `<b>最大:</b> ${params.data.max}<br/>`;
+            if (dataItem.min !== undefined) str += `<b>最小:</b> ${params.data.min}<br/>`;
             if (dataItem && dataItem.tooltipText) {
-              str += `<br/><span style="color:#aaa;font-size:12px;">说明：${dataItem.tooltipText.replace(/\n/g, '<br/>')}</span>`;
+              str += `<span style="color:#aaa;font-size:12px;">说明：${dataItem.tooltipText.replace(/\n/g, '<br/>')}</span>`;
             }
             str += `</div>`;
             return str;

@@ -18,7 +18,7 @@ export default {
     },
     height: {
       type: String,
-      default: '400px'
+      default: '100%'
     },
     // 外部传入的数据
     chartData: {

@@ -23,12 +23,12 @@ export default {
     chartTitle: {type: String, default: '数据分布概览'},
     labelMaxLength: {type: Number, default: 6},
     backgroundColor: {type: String, default: 'transparent'},
-    minSize: {type: Number, default: 0.12},
-    maxSize: {type: Number, default: 0.5},
+    minSize: {type: Number, default: 0.15},
+    maxSize: {type: Number, default: 0.6},
     // --- 是否显示额外统计信息（总量/平均值） ---
     showExtraInfo: {
       type: Boolean,
-      default: false
+      default: true
     },
   },
 
@@ -135,6 +135,7 @@ export default {
           rawVal: item.value,
           max: item.max,
           min: item.min,
+          currentAvg: item.avg,
           percentage: percentage,
           tooltipText: item.tooltipText || '',
           itemStyle: {
@@ -162,7 +163,7 @@ export default {
           padding: 12,
           textStyle: {color: '#fff'},
           formatter: (params) => {
-            const {name, rawVal, percentage, tooltipText, max, min} = params.data
+            const {name, rawVal, percentage, tooltipText, max, min, currentAvg} = params.data
 
             // --- 动态构建 Tooltip 内容 ---
             let header = '';
@@ -180,6 +181,7 @@ export default {
               <b style="color:#10EBE3; font-size:14px;">${name}</b><br/>
               <b>数值:</b> ${rawVal} ${percentage}<br/>`;
 
+            if (currentAvg !== undefined) res += `<b>平均:</b> ${currentAvg}<br/>`;
             if (max !== undefined) res += `<b>最大:</b> ${max}<br/>`;
             if (min !== undefined) res += `<b>最小:</b> ${min}<br/>`;
 

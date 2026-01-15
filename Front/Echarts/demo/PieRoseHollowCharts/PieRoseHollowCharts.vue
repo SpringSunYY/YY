@@ -124,11 +124,11 @@ export default {
         title: {
           text: this.chartTitle,
           left: 'center',
-          top: 20,
+          top: '1%',
           textStyle: {
-            color: '#fff',
+            color: '#0afd00',
             fontSize: 20,
-            fontWeight: 'normal'
+            fontWeight: 'bold'
           }
         },
         tooltip: {
@@ -178,8 +178,8 @@ export default {
           {
             name: "风险预警",
             type: "pie",
-            radius: ["30%", "75%"],
-            center: ["50%", "50%"],
+            radius: ["25%", "75%"],
+            center: ["50%", "48%"],
             roseType: "radius", // 南丁格尔玫瑰图
             avoidLabelOverlap: true,
             itemStyle: {},

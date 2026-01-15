@@ -145,7 +145,7 @@ export default {
         title: {
           text: this.chartTitle,
           left: 'center',
-          top: 20,
+          top: '1%',
           textStyle: {
             color: '#3bd2fe',
             fontSize: 18,
@@ -164,10 +164,13 @@ export default {
               res += `总数: ${total} | 平均值: ${avg}<br/>`;
               res += `<hr style="border:0.3px solid #555;margin:5px 0;"/>`;
             }
-            res += `${params.name} : ${params.value} (${params.percent}%)`;
+            res += `<b>${params.name}</b> : ${params.value.toFixed(2)} (${params.percent}%)<br/>`;
             if (params.data.tooltipText) {
-              res += `<br/><span style="color:#3bd2fe; font-size:12px;">说明：${params.data.tooltipText.replace(/\n/g, '<br/>')}</span>`;
+              res += `<span style="color:#3bd2fe; font-size:12px;">说明：${params.data.tooltipText.replace(/\n/g, '<br/>')}</span><br/>`;
             }
+            if (params.data.max !== undefined) res += `<b>最大:</b> ${params.data.max}<br/>`;
+            if (params.data.min !== undefined) res += `<b>最小:</b> ${params.data.min}<br/>`;
+            if (params.data.avg !== undefined) res += `<b>平均:</b> ${params.data.avg.toFixed(2)}<br/>`;
             return res;
           }
         },
@@ -203,7 +206,7 @@ export default {
           type: 'pie',
           radius: ['15%', '75%'],
           roseType: 'radius',
-          center: ['50%', '55%'],
+          center: ['50%', '52%'],
           startAngle: 100,
           avoidLabelOverlap: true,
           data: seriesData,
@@ -216,7 +219,7 @@ export default {
           },
           labelLine: {
             lineStyle: {color: '#0096b1'},
-            length: 15,
+            length: 5,
             length2: 10
           }
         }]

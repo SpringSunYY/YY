@@ -135,6 +135,7 @@ export default {
             realValue: item.value,
             originMax: item.max,
             originMin: item.min,
+            originAvg: item.avg,
             tooltipText: item.tooltipText || '',
             itemStyle: {
               color: this.getDynamicGradient(),
@@ -155,8 +156,8 @@ export default {
         // 缩放控制逻辑
         dataZoom: [
           // X 轴内置缩放
-          {type: 'inside', xAxisIndex: 0, minSpan: 60},
-          {type: 'inside', yAxisIndex: 0, minSpan: 60},
+          {type: 'inside', xAxisIndex: 0, minSpan: 30},
+          {type: 'inside', yAxisIndex: 0, minSpan: 30},
           // X 轴下方滚动条
           {
             type: 'slider',
@@ -214,7 +215,10 @@ export default {
                       </div>`;
             }
 
-            res += `当前数值: <b>${d.realValue}</b> <small>(${percentage}%)</small><br/>`;
+            res += `数量: <b>${d.realValue}</b> <small>(${percentage}%)</small><br/>`;
+            if (d.originAvg) {
+              res += `平均: ${d.originAvg.toFixed(2)}<br/>`;
+            }
             res += `最大值: ${d.originMax} | 最小值: ${d.originMin}`;
 
             if (d.tooltipText) {
