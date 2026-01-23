@@ -18,6 +18,10 @@ export default {
     className: {type: String, default: 'chart'},
     width: {type: String, default: '100%'},
     height: {type: String, default: '100%'},
+    chartTitle: {
+      type: String,
+      default: '签约项目分类'
+    },
     chartData: {
       type: Array,
       default: () => [
@@ -172,7 +176,7 @@ export default {
         backgroundColor: this.backgroundColor,
         title: [
           {
-            text: '签约项目分类',
+            text: this.chartTitle,
             left: '21%',
             top: '40%',
             textStyle: {color: '#fff', fontSize: 18, fontWeight: 'bold'}
