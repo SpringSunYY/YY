@@ -103,6 +103,7 @@ export default {
       const avg = (total / data.length).toFixed(2);
 
       const seriesData = data.map((item, index) => {
+        if (item.value <= 0) return
         // 优先使用传入的随机函数，否则根据索引取色
         const baseColor = typeof generateRandomColor === 'function'
           ? generateRandomColor(this.defaultColor)
@@ -169,7 +170,7 @@ export default {
           pageTextStyle: {color: '#fff'},
           itemGap: 15,
           textStyle: {
-            color: "#fff",
+            color: "#000000",
             fontSize: 14
           },
           data: data.map(item => item.name)
@@ -186,7 +187,7 @@ export default {
             label: {
               show: true,
               fontSize: 14,
-              color: '#fff',
+              color: '#000000',
               formatter: params => {
                 return params.name + '\n' + params.percent + "%";
               }
@@ -196,7 +197,7 @@ export default {
               length2: 10,
               smooth: true,
               lineStyle: {
-                color: 'rgba(255, 255, 255, 0.5)'
+                color: 'rgba(0,0,0,0.5)'
               }
             },
             data: seriesData
