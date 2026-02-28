@@ -178,13 +178,13 @@ export default {
         backgroundColor: this.backgroundColor,
         title: {
           text: this.chartTitle,
-          textStyle: {color: '#fff', fontSize: 18},
+          textStyle: {color: this.hexToRgba(1), fontSize: 18},
           left: 'center',
           top: '1%'
         },
         legend: {
           data: ['折线图', '柱形图', '平均线'],
-          textStyle: {color: 'rgb(0,253,255,0.6)'},
+          textStyle: {color: this.hexToRgba(0.6)},
           right: '4%',
           top: '6%'
         },
@@ -209,7 +209,10 @@ export default {
             if (idx > 0) {
               const prevVal = data[idx - 1].value;
               const diff = val - prevVal;
-              const percent = prevVal !== 0 ? ((diff / prevVal) * 100).toFixed(1) : 0;
+              let percent = prevVal !== 0 ? ((diff / prevVal) * 100).toFixed(1) : 0;
+              if ( percent==='Infinity'){
+                percent='NaN';
+              }
               const color = diff >= 0 ? '#ff4d4f' : '#52c41a';
               ratioHtml = `<span style="color:${color}; margin-left:8px;">${diff >= 0 ? '+' : ''}${diff} (${percent}%)</span>`;
             }
@@ -244,7 +247,7 @@ export default {
             borderColor: 'transparent',
             fillerColor: this.hexToRgba(0.2),
             handleStyle: {color: this.hexToRgba(0.8)},
-            textStyle: {color: 'rgb(0,253,255,0.6)'}
+            textStyle: {color: this.hexToRgba(0.6)}
           },
           {
             type: 'inside', // 允许鼠标滚轮缩放
@@ -254,13 +257,13 @@ export default {
         xAxis: {
           type: 'category',
           data: xLabels,
-          axisLabel: {color: 'rgb(0,253,255,0.6)'}
+          axisLabel: {color: this.hexToRgba(0.6)}
         },
         yAxis: {
           name: this.unit,
           type: 'value',
-          splitLine: {lineStyle: {color: 'rgba(23,255,243,0.1)'}},
-          axisLabel: {color: 'rgb(0,253,255,0.6)'}
+          splitLine: {lineStyle: {color: this.hexToRgba(0.1)}},
+          axisLabel: {color: this.hexToRgba(0.6)}
         },
         series: [
           {
@@ -298,17 +301,17 @@ export default {
               symbol: 'none',
               data: [{
                 yAxis: avg,
-                lineStyle: {color: '#ffea00', type: 'dashed'},
+                lineStyle: {color: this.hexToRgba(0.9), type: 'dashed'},
                 label: {
                   show: true,
                   position: 'end',
                   formatter: '平均线',
                   // 添加以下样式属性
-                  color: '#ffffff',           // 文字颜色
+                  color: this.hexToRgba(0.8),           // 文字颜色
                   fontSize: 12,              // 字体大小
                   fontWeight: 'bold',        // 字体粗细
                   textStyle: {               // 文本样式（旧版本兼容）
-                    color: '#ffffff'
+                    color: this.hexToRgba(0.8)
                   }
                 }
               }]
