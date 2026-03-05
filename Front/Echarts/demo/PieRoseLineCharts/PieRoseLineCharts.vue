@@ -114,6 +114,12 @@ export default {
       }
       this.chart = echarts.init(this.$refs.chartRef);
       this.setOption(this.chartData);
+      // 点击事件监听
+      this.chart.on('click', (params) => {
+        if (params.name && params.name !== '' && params.data) {
+          this.$emit('item-click', params.data);
+        }
+      });
     },
 
     setOption(data) {

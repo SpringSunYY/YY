@@ -105,6 +105,12 @@ export default {
       }
       this.chart = echarts.init(this.$refs.chartRef);
       this.setOption(this.chartData);
+      // 点击事件监听
+      this.chart.on('click', (params) => {
+        if (params.name && params.name !== '' && params.data) {
+          this.$emit('item-click', params.data);
+        }
+      });
     },
     setOption(data) {
       if (!data || !data.length) {
@@ -119,6 +125,7 @@ export default {
         sum += Number(item.value)
         colorList.push(generateRandomColor(this.defaultColor))
       })
+      sum = sum.toFixed(2)
       const avg = (sum / chartData.length).toFixed(2)
 
       const gap = (1 * sum) / 100

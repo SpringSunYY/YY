@@ -39,7 +39,7 @@ export default {
     // 是否显示 Total 和 Avg
     showExtraInfo: {
       type: Boolean,
-      default: false
+      default: true
     },
     // 背景颜色
     backgroundColor: {type: String, default: 'transparent'},
@@ -94,12 +94,18 @@ export default {
       }
       this.chart = echarts.init(this.$refs.chartRef);
       this.setOption(this.chartData);
+      // 点击事件监听
+      this.chart.on('click', (params) => {
+        if (params.name && params.name !== '' && params.data && params.data.originItem) {
+          this.$emit('item-click', params.data.originItem);
+        }
+      });
     },
 
     setOption(data) {
       if (!data || !data.length) return;
 
-      const total = data.reduce((sum, item) => sum + Number(item.value), 0);
+      const total = data.reduce((sum, item) => sum + Number(item.value), 0).toFixed(2);
       const avg = (total / data.length).toFixed(2);
 
       const seriesData = data.map((item, index) => {
@@ -170,7 +176,7 @@ export default {
           pageTextStyle: {color: '#fff'},
           itemGap: 15,
           textStyle: {
-            color: "#000000",
+            color: "#ffffff",
             fontSize: 14
           },
           data: data.map(item => item.name)
@@ -187,7 +193,7 @@ export default {
             label: {
               show: true,
               fontSize: 14,
-              color: '#000000',
+              color: '#ffffff',
               formatter: params => {
                 return params.name + '\n' + params.percent + "%";
               }
@@ -197,7 +203,7 @@ export default {
               length2: 10,
               smooth: true,
               lineStyle: {
-                color: 'rgba(0,0,0,0.5)'
+                color: 'rgba(255,255,255,0.5)'
               }
             },
             data: seriesData
