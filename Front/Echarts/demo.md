@@ -12491,7 +12491,11 @@ watch([() => props.current, () => props.total], () => {
 
 ![image-20250927192804578](assets/image-20250927192804578.png)
 
+## 东莞地图：DongGuanMapCharts
 
+> vue2
+
+![image-20260416191018491](assets/image-20260416191018491.png)
 
 ## 中国地图：Map
 
