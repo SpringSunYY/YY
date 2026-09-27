@@ -380,6 +380,7 @@ private UserPictureDetailInfoVo getUserPictureDetailInfoVo(String pictureId) {
 2. 无需额外配置：不需要修改启动类或其他配置
 3. 清晰明了：代码意图明确，其他人容易理解
 4. 性能良好：Spring会正确处理循环依赖并提供代理对象
+5. Spring AOP 在 @annotation 和 @within 共用同一个绑定变量名并使用 || 组合时，注解绑定会失效。
 
 这种方式能确保调用带有 [@CustomCacheable](file://E:\Project\Picture\Code\Picture\picture-common\src\main\java\com\lz\common\annotation\CustomCacheable.java#L11-L27) 注解的方法时能够触发缓存逻辑。
 

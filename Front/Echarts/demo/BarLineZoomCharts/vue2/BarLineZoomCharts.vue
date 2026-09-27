@@ -209,12 +209,16 @@ export default {
             if (idx > 0) {
               const prevVal = data[idx - 1].value;
               const diff = val - prevVal;
-              let percent = prevVal !== 0 ? ((diff / prevVal) * 100).toFixed(1) : 0;
-              if ( percent==='Infinity'){
-                percent='NaN';
+              let percent = '';
+              if (prevVal === 0) {
+                percent = val > 0 ? '新增' : '0';
+              } else {
+                const p = ((diff / prevVal) * 100).toFixed(1);
+                percent = p === 'Infinity' ? 'NaN' : p;
               }
               const color = diff >= 0 ? '#ff4d4f' : '#52c41a';
-              ratioHtml = `<span style="color:${color}; margin-left:8px;">${diff >= 0 ? '+' : ''}${diff} (${percent}%)</span>`;
+              const percentNum = Number(percent);
+              ratioHtml = `<span style="color:${color}; margin-left:8px;">${diff >= 0 ? '+' : ''}${diff}${!isNaN(percentNum) ? ` (${percent}%)` : percent ? ` (${percent})` : ''}</span>`;
             }
 
             const percentOfTotal = total > 0 ? ((val / total) * 100).toFixed(1) : 0;
